@@ -915,6 +915,7 @@ let mpRetryVotes = {};        // { uid: true } — players who want to retry
 let mpRetrySelection = 0;     // 0 = retry, 1 = leave (for win/lose screen)
 let mpMatchSettings = null;   // { difficulty, cheats } from host lobby
 let mpSettingsSelection = 0;  // lobby settings cursor
+let mpGameMode = 'story';     // 'story' or 'endless' — selected by host in lobby
 
 // Check if other MP players are still alive
 function getAlivePlayerList() {
@@ -1320,12 +1321,12 @@ function setupRoomListeners(code, uid) {
     const st = snap.val();
     if (st === 'playing' && !mpGameStarted) {
       mpGameStarted = true;
-      startGame();
+      if (mpGameMode === 'endless') { startEndless(); } else { startGame(); }
     }
     if (st === 'playing' && mpGameStarted && (state === 'won' || state === 'dead')) {
       // Retry triggered — restart game
       mpRetryVotes = {};
-      startGame();
+      if (mpGameMode === 'endless') { startEndless(); } else { startGame(); }
     }
     if (st === 'restarting') {
       // Pre-restart signal — clear votes
@@ -1356,6 +1357,7 @@ function setupRoomListeners(code, uid) {
           }
         }
         if (typeof ms.doubleJump === 'boolean') settings.doubleJump = ms.doubleJump;
+        if (ms.gameMode) mpGameMode = ms.gameMode;
       }
     });
   }
@@ -1415,6 +1417,15 @@ function setupRoomListeners(code, uid) {
         }
       }
       snap.ref.remove();
+    });
+    // Host listens for guest shop picks in endless mode
+    roomR.child('shopPick').on('value', snap => {
+      const pick = snap.val();
+      if (pick && pick.key && state === 'endlessShop') {
+        endlessApplyPowerup(pick.key);
+        endlessNextRound();
+        snap.ref.remove();
+      }
     });
   }
 
@@ -1514,10 +1525,11 @@ async function startMultiplayerGame() {
     difficulty: settings.difficulty,
     cheats: cheats,
     doubleJump: settings.doubleJump,
+    gameMode: mpGameMode,
   });
   await db.ref('rooms/' + currentRoom + '/state').set('playing');
   mpGameStarted = true;
-  startGame();
+  if (mpGameMode === 'endless') { startEndless(); } else { startGame(); }
 }
 
 function sendChatMessage() {
@@ -1658,6 +1670,33 @@ function syncEnemyData() {
     }));
   }
 
+  // ── ENDLESS MODE SYNC ──
+  if (state === 'endless' || state === 'endlessShop') {
+    enemies.endlessRound = endless.round;
+    enemies.endlessModifier = endless.modifier ? endless.modifier.name : null;
+    enemies.endlessBossActive = endless.bossActive;
+    enemies.endlessPowerups = { ...endless.powerups };
+    enemies.endlessSpawnsLeft = endless.spawnsLeft;
+    enemies.endlessShopChoices = endless.shopChoices;
+    enemies.endlessShopSel = endless.shopSelection;
+    enemies.endlessIntermission = endless.intermission;
+    if (endless.enemies.length > 0) {
+      enemies.endlessEnemies = endless.enemies.map(e => ({
+        x: Math.round(e.x), y: Math.round(e.y), w: e.w, h: e.h,
+        hp: e.hp, maxHp: e.maxHp, speed: e.speed, dir: e.dir,
+        type: e.type, imgKey: e.imgKey, color: e.color,
+        frame: e.frame, dead: e.dead, vy: e.vy,
+        shootCooldown: e.shootCooldown, dmg: e.dmg,
+        isBoss: e.isBoss || false, bossName: e.bossName || null,
+      }));
+    }
+    if (bullets.length > 0) {
+      enemies.endlessBullets = bullets.map(b => ({
+        x: Math.round(b.x), y: Math.round(b.y), vx: b.vx, vy: b.vy, life: b.life
+      }));
+    }
+  }
+
   // Sync game state, cutscene, dialogue, and timers for all players
   enemies.gameState = state;
   enemies.cutscenePhase = cutscene.phase;
@@ -1777,12 +1816,26 @@ function applyEnemyData() {
   }
   // Apply game state + cutscene/dialogue sync from host
   if (d.gameState) {
-    const syncStates = ['cutscene','bossfight','bossdialogue','phonecall','epsteinfight','fusioncutscene','fusionfight','splitfight','hawkingRefusal','hawkingDeath','winCutscene','won','dead'];
+    const syncStates = ['cutscene','bossfight','bossdialogue','phonecall','epsteinfight','fusioncutscene','fusionfight','splitfight','hawkingRefusal','hawkingDeath','winCutscene','won','dead','endless','endlessShop'];
     if (syncStates.includes(d.gameState) && state !== d.gameState) {
       const oldState = state;
       // First time entering cutscene — set up cutscene.active so rendering works
       if (d.gameState === 'cutscene' && state !== 'cutscene') {
         cutscene.active = true;
+      }
+      // Guest entering endless from shop — heal
+      if (d.gameState === 'endless' && oldState === 'endlessShop') {
+        const healAmt = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : 3;
+        player.hp = Math.min(player.hp + healAmt, player.maxHp);
+        player.iFrames = 60;
+      }
+      // Guest entering shop from endless — clear bullets
+      if (d.gameState === 'endlessShop' && oldState === 'endless') {
+        bullets = [];
+        endless.bossActive = false;
+        endless.modifier = null;
+        screenFlash = 20;
+        screenFlashColor = '#44ff44';
       }
       // Teleport player into arena when entering any fight state for first time
       const fightStates = ['bossfight','epsteinfight','fusionfight','splitfight'];
@@ -1854,6 +1907,52 @@ function applyEnemyData() {
   if (typeof d.hawkRefT === 'number') hawkingRefusalTimer = d.hawkRefT;
   if (typeof d.hawkDeathT === 'number') hawkingDeathTimer = d.hawkDeathT;
   if (typeof d.winCutT === 'number') winCutsceneTimer = d.winCutT;
+
+  // ── APPLY ENDLESS STATE (guest only) ──
+  if (typeof d.endlessRound === 'number') endless.round = d.endlessRound;
+  if (typeof d.endlessSpawnsLeft === 'number') endless.spawnsLeft = d.endlessSpawnsLeft;
+  if (d.endlessBossActive !== undefined) endless.bossActive = d.endlessBossActive;
+  if (d.endlessModifier) {
+    const modDef = ENDLESS_ROUND_MODIFIERS.find(m => m.name === d.endlessModifier);
+    endless.modifier = modDef || null;
+  } else if (d.endlessModifier === null) {
+    endless.modifier = null;
+  }
+  if (d.endlessPowerups) {
+    for (const k in d.endlessPowerups) {
+      if (k in endless.powerups) endless.powerups[k] = d.endlessPowerups[k];
+    }
+  }
+  if (d.endlessShopChoices) endless.shopChoices = d.endlessShopChoices;
+  if (typeof d.endlessShopSel === 'number') endless.shopSelection = d.endlessShopSel;
+  if (d.endlessIntermission !== undefined) endless.intermission = d.endlessIntermission;
+  // Apply endless enemies
+  if (d.endlessEnemies) {
+    while (endless.enemies.length < d.endlessEnemies.length) {
+      endless.enemies.push({ iFrames: 0, frameTimer: 0, attackTimer: 0 });
+    }
+    while (endless.enemies.length > d.endlessEnemies.length) endless.enemies.pop();
+    for (let i = 0; i < d.endlessEnemies.length; i++) {
+      const se = d.endlessEnemies[i];
+      const ee = endless.enemies[i];
+      ee.x = se.x; ee.y = se.y; ee.w = se.w; ee.h = se.h;
+      ee.hp = se.hp; ee.maxHp = se.maxHp; ee.speed = se.speed; ee.dir = se.dir;
+      ee.type = se.type; ee.imgKey = se.imgKey; ee.color = se.color;
+      ee.frame = se.frame; ee.dead = se.dead; ee.vy = se.vy;
+      ee.shootCooldown = se.shootCooldown; ee.dmg = se.dmg;
+      ee.isBoss = se.isBoss || false; ee.bossName = se.bossName || null;
+    }
+  } else if (state === 'endless' || state === 'endlessShop') {
+    endless.enemies = [];
+  }
+  // Apply endless bullets on guest
+  if (state === 'endless' || state === 'endlessShop') {
+    if (d.endlessBullets) {
+      bullets = d.endlessBullets.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, life: b.life }));
+    } else {
+      bullets = [];
+    }
+  }
 }
 
 // Handle guest damage event on host
@@ -1934,6 +2033,22 @@ function mpHandleDamageEvent(dmg) {
     bm.hp -= amt;
     spawnParticles(bm.x + bm.w/2, bm.y + bm.h/2, '#ff4444', 6);
     if (bm.hp <= 0) { bm.dead = true; spawnParticles(bm.x+bm.w/2, bm.y+bm.h/2, '#ffffff', 8); }
+  } else if (dmg.target === 'endlessEnemy' && typeof dmg.index === 'number' && dmg.index < endless.enemies.length && !endless.enemies[dmg.index].dead) {
+    const ee = endless.enemies[dmg.index];
+    ee.hp -= amt;
+    ee.iFrames = 5;
+    spawnParticles(ee.x + ee.w/2, ee.y + ee.h/3, ee.color || '#ff4444', 8);
+    shakeTimer = 4;
+    if (ee.hp <= 0) {
+      ee.dead = true;
+      endless.totalKills++;
+      spawnParticles(ee.x + ee.w/2, ee.y + ee.h/2, ee.color || '#ff4444', 20);
+      spawnParticles(ee.x + ee.w/2, ee.y + ee.h/2, '#ffdd44', 10);
+      shakeTimer = 8;
+      if (endless.powerups.vampirism > 0 && player.alive) {
+        player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
+      }
+    }
   }
 }
 
@@ -1989,6 +2104,7 @@ function mpSyncLobbySettings() {
     difficulty: settings.difficulty,
     cheats: cheats,
     doubleJump: settings.doubleJump,
+    gameMode: mpGameMode,
   });
 }
 
@@ -2491,23 +2607,28 @@ window.addEventListener('keydown', e => {
       if (e.code === 'Space' && !chatOpen && isHost) { startMultiplayerGame(); }
       // Host settings navigation
       if (isHost && !chatOpen) {
-        const settCount = 8;
+        const settCount = 9;
         if (e.code === 'ArrowUp' || e.code === 'KeyW') { mpSettingsSelection = (mpSettingsSelection - 1 + settCount) % settCount; }
         if (e.code === 'ArrowDown' || e.code === 'KeyS') { mpSettingsSelection = (mpSettingsSelection + 1) % settCount; }
         if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'KeyA' || e.code === 'KeyD') {
           const dir = (e.code === 'ArrowRight' || e.code === 'KeyD') ? 1 : -1;
           if (mpSettingsSelection === 0) {
+            const modes = ['story','endless'];
+            let idx = modes.indexOf(mpGameMode);
+            idx = (idx + dir + modes.length) % modes.length;
+            mpGameMode = modes[idx];
+          } else if (mpSettingsSelection === 1) {
             const diffs = ['easy','normal','hard','insane'];
             let idx = diffs.indexOf(settings.difficulty);
             idx = (idx + dir + diffs.length) % diffs.length;
             settings.difficulty = diffs[idx];
-          } else if (mpSettingsSelection === 1) { settings.doubleJump = !settings.doubleJump; }
-          else if (mpSettingsSelection === 2) { cheats.godMode = !cheats.godMode; }
-          else if (mpSettingsSelection === 3) { cheats.oneHitKill = !cheats.oneHitKill; }
-          else if (mpSettingsSelection === 4) { cheats.infiniteJumps = !cheats.infiniteJumps; }
-          else if (mpSettingsSelection === 5) { cheats.speedBoost = !cheats.speedBoost; }
-          else if (mpSettingsSelection === 6) { cheats.bigProjectiles = !cheats.bigProjectiles; }
-          else if (mpSettingsSelection === 7) { cheats.noCooldown = !cheats.noCooldown; }
+          } else if (mpSettingsSelection === 2) { settings.doubleJump = !settings.doubleJump; }
+          else if (mpSettingsSelection === 3) { cheats.godMode = !cheats.godMode; }
+          else if (mpSettingsSelection === 4) { cheats.oneHitKill = !cheats.oneHitKill; }
+          else if (mpSettingsSelection === 5) { cheats.infiniteJumps = !cheats.infiniteJumps; }
+          else if (mpSettingsSelection === 6) { cheats.speedBoost = !cheats.speedBoost; }
+          else if (mpSettingsSelection === 7) { cheats.bigProjectiles = !cheats.bigProjectiles; }
+          else if (mpSettingsSelection === 8) { cheats.noCooldown = !cheats.noCooldown; }
           mpSyncLobbySettings();
         }
       }
@@ -2598,8 +2719,12 @@ window.addEventListener('keydown', e => {
     }
     if (e.code === 'Space' || e.code === 'Enter') {
       const key = endless.shopChoices[endless.shopSelection];
-      endlessApplyPowerup(key);
-      endlessNextRound();
+      if (mpEnabled && !isHost) {
+        db.ref('rooms/' + currentRoom + '/shopPick').set({ key: key, by: myUid() });
+      } else {
+        endlessApplyPowerup(key);
+        endlessNextRound();
+      }
     }
     return;
   }
@@ -2994,8 +3119,12 @@ canvas.addEventListener('click', e => {
       if (cx > cxCard && cx < cxCard + cardW && cy > cardY2 && cy < cardY2 + cardH) {
         endless.shopSelection = ci;
         const key = endless.shopChoices[ci];
-        endlessApplyPowerup(key);
-        endlessNextRound();
+        if (mpEnabled && !isHost) {
+          db.ref('rooms/' + currentRoom + '/shopPick').set({ key: key, by: myUid() });
+        } else {
+          endlessApplyPowerup(key);
+          endlessNextRound();
+        }
         return;
       }
     }
@@ -3259,22 +3388,24 @@ canvas.addEventListener('touchstart', e => {
         // Host match settings touch (right column)
         if (isHost && cx > colR && cx < colR + colW) {
           const settY = H * 0.26;
-          for (let i = 0; i < 8; i++) {
+          for (let i = 0; i < 9; i++) {
             const SETT_SP = 34;
             const y = settY + i * SETT_SP;
             if (cy > y - 16 && cy < y + SETT_SP - 18) {
               mpSettingsSelection = i;
               if (i === 0) {
+                mpGameMode = mpGameMode === 'story' ? 'endless' : 'story';
+              } else if (i === 1) {
                 const diffs = ['easy','normal','hard','insane'];
                 let idx = diffs.indexOf(settings.difficulty);
                 settings.difficulty = diffs[(idx + 1) % diffs.length];
-              } else if (i === 1) { settings.doubleJump = !settings.doubleJump; }
-              else if (i === 2) { cheats.godMode = !cheats.godMode; }
-              else if (i === 3) { cheats.oneHitKill = !cheats.oneHitKill; }
-              else if (i === 4) { cheats.infiniteJumps = !cheats.infiniteJumps; }
-              else if (i === 5) { cheats.speedBoost = !cheats.speedBoost; }
-              else if (i === 6) { cheats.bigProjectiles = !cheats.bigProjectiles; }
-              else if (i === 7) { cheats.noCooldown = !cheats.noCooldown; }
+              } else if (i === 2) { settings.doubleJump = !settings.doubleJump; }
+              else if (i === 3) { cheats.godMode = !cheats.godMode; }
+              else if (i === 4) { cheats.oneHitKill = !cheats.oneHitKill; }
+              else if (i === 5) { cheats.infiniteJumps = !cheats.infiniteJumps; }
+              else if (i === 6) { cheats.speedBoost = !cheats.speedBoost; }
+              else if (i === 7) { cheats.bigProjectiles = !cheats.bigProjectiles; }
+              else if (i === 8) { cheats.noCooldown = !cheats.noCooldown; }
               mpSyncLobbySettings();
               return;
             }
@@ -3365,8 +3496,12 @@ canvas.addEventListener('touchstart', e => {
         if (cx > cxCard && cx < cxCard + cardW && cy > cardY3 && cy < cardY3 + cardH) {
           endless.shopSelection = ci;
           const key = endless.shopChoices[ci];
-          endlessApplyPowerup(key);
-          endlessNextRound();
+          if (mpEnabled && !isHost) {
+            db.ref('rooms/' + currentRoom + '/shopPick').set({ key: key, by: myUid() });
+          } else {
+            endlessApplyPowerup(key);
+            endlessNextRound();
+          }
           return;
         }
       }
@@ -5189,6 +5324,19 @@ function update() {
           }
         }
       }
+      // Endless enemy collision (guest)
+      if (!hit && state === 'endless') {
+        for (let ei = 0; ei < endless.enemies.length; ei++) {
+          const ee = endless.enemies[ei];
+          if (ee.dead) continue;
+          if (rectsOverlap(proj, ee)) {
+            spawnParticles(ee.x + ee.w/2, ee.y + ee.h/3, ee.color || '#ff4444', 8);
+            shakeTimer = ee.isBoss ? 6 : 4;
+            mpSendDamage('endlessEnemy', ei, 1);
+            hit = true; break;
+          }
+        }
+      }
       if (hit || proj.life <= 0) { projectiles.splice(i, 1); }
       continue;
     }
@@ -6825,8 +6973,8 @@ function update() {
       // Applied in movement: player.vx is already set. We just clamp differently.
     }
 
-    // ── SPAWN ENEMIES ──
-    if (state === 'endless' && endless.spawnsLeft > 0) {
+    // ── SPAWN ENEMIES (host only in MP) ──
+    if (state === 'endless' && endless.spawnsLeft > 0 && (!mpEnabled || isHost)) {
       endless.spawnTimer--;
       if (endless.spawnTimer <= 0) {
         endlessSpawnEnemy();
@@ -6836,9 +6984,10 @@ function update() {
       }
     }
 
-    // ── UPDATE ENDLESS ENEMIES ──
+    // ── UPDATE ENDLESS ENEMIES (host/solo only — guest receives via sync) ──
     const aX = endless.arenaX, aW = endless.arenaW, aH = endless.arenaH;
     const floorY = endless.arenaY + aH;
+    if (!mpEnabled || isHost) {
     for (const e of endless.enemies) {
       if (e.dead) continue;
       if (e.iFrames > 0) e.iFrames--;
@@ -7056,9 +7205,13 @@ function update() {
       }
     }
 
-    // Remove dead enemies
-    for (let i = endless.enemies.length - 1; i >= 0; i--) {
-      if (endless.enemies[i].dead) endless.enemies.splice(i, 1);
+    } // end host-only enemy AI
+
+    // Remove dead enemies (host only in MP)
+    if (!mpEnabled || isHost) {
+      for (let i = endless.enemies.length - 1; i >= 0; i--) {
+        if (endless.enemies[i].dead) endless.enemies.splice(i, 1);
+      }
     }
 
     // ── PROJECTILE vs ENDLESS ENEMIES (handled in main projectile loop below?) ──
@@ -7098,8 +7251,8 @@ function update() {
       }
     }
 
-    // ── CHECK ROUND COMPLETE ──
-    if (state === 'endless' && endless.spawnsLeft <= 0 && endless.enemies.length === 0 && player.alive) {
+    // ── CHECK ROUND COMPLETE (host only in MP) ──
+    if (state === 'endless' && endless.spawnsLeft <= 0 && endless.enemies.length === 0 && player.alive && (!mpEnabled || isHost)) {
       // Round cleared!
       state = 'endlessShop';
       endless.intermission = true;
@@ -9988,6 +10141,7 @@ function draw() {
       puY -= 18;
     }
     ctx.textAlign = 'left';
+    if (_isTouchDev) drawTouchButtons();
   }
 
   // ═══ ENDLESS SHOP OVERLAY ═══
@@ -13866,6 +14020,7 @@ function draw() {
       const settY = H * 0.26;
       const SETT_SPACING = _isTouchDev ? 34 : 26;
       const settItems = [
+        { label: 'Game Mode', value: mpGameMode.toUpperCase(), key: 'gameMode' },
         { label: 'Difficulty', value: settings.difficulty.toUpperCase(), key: 'difficulty' },
         { label: 'Double Jump', value: settings.doubleJump ? 'ON' : 'OFF', key: 'doubleJump' },
         { label: 'God Mode', value: cheats.godMode ? 'ON' : 'OFF', key: 'godMode' },
