@@ -1941,7 +1941,7 @@ function applyEnemyData() {
       }
       // Guest entering endless from shop — heal
       if (d.gameState === 'endless' && oldState === 'endlessShop') {
-        const healAmt = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : 3;
+        const healAmt = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : Math.ceil(player.maxHp * 0.2);
         player.hp = Math.min(player.hp + healAmt, player.maxHp);
         player.iFrames = 60;
       }
@@ -5412,7 +5412,7 @@ function update() {
     if (!proj) continue;
     proj.x += proj.vx;
     proj.y += proj.vy;
-    proj.vy += 0.12;
+    proj.vy += 0.04;
     proj.life--;
 
     // Hit guards
@@ -7459,7 +7459,7 @@ function update() {
       endless.modifier = null;
       endlessGenerateShop();
       // Heal player between rounds (more after boss rounds)
-      const healAmount = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : 3;
+      const healAmount = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : Math.ceil(player.maxHp * 0.2);
       player.hp = Math.min(player.hp + healAmount, player.maxHp);
       player.iFrames = 60;
       bullets = [];
