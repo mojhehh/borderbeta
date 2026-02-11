@@ -236,15 +236,23 @@ let endless = {
   platforms: [],
   // Power-ups the player has collected
   powerups: {
-    dmgBoost: 0,      // +25% dmg per level (max 5)
-    speedBoost: 0,    // +15% speed per level (max 5)
+    dmgBoost: 0,      // +20% dmg per level (max 5)
+    speedBoost: 0,    // +12% speed per level (max 5)
     maxHpBoost: 0,    // +5 HP per level (max 5)
-    regenBoost: 0,    // regen 1 HP every X seconds (max 3): 10s, 7s, 4s
-    projSpeed: 0,     // +20% proj speed per level (max 5)
+    regenBoost: 0,    // regen 1 HP every X seconds (max 3): 8s, 5s, 3s
+    projSpeed: 0,     // +15% proj speed per level (max 5)
     multiShot: 0,     // shoot extra projectiles (max 3): 1, 2, 3 extra
-    cooldownReduce: 0,// -20% cooldown per level (max 4)
+    cooldownReduce: 0,// -15% cooldown per level (max 4)
     vampirism: 0,     // heal on kill (max 3): 1hp, 2hp, 3hp per kill
+    shield: 0,        // absorb hits (max 3): 1, 2, 3 charges per round
+    thorns: 0,        // reflect damage to melee attackers (max 3)
+    explosiveShot: 0, // projectiles explode on hit for AoE (max 2)
+    dash: 0,          // double-tap to dash/dodge (max 2): short, long
+    freezeAura: 0,    // slow nearby enemies (max 2)
+    luckyDrop: 0,     // chance to drop HP pickups from kills (max 3)
   },
+  shieldCharges: 0,   // current shield charges this round
+  dashCooldown: 0,    // frames until dash is ready
   shopChoices: [],     // 3 power-up options for current round
   shopSelection: 0,
   boss: null,          // current boss enemy ref
@@ -254,14 +262,20 @@ let endless = {
 };
 
 const ENDLESS_POWERUP_DEFS = {
-  dmgBoost:      { name: 'DAMAGE UP',     icon: 'sword',  desc: '+25% throwable damage',   max: 5, color: '#ff4444' },
-  speedBoost:    { name: 'SPEED UP',       icon: 'wind',   desc: '+15% movement speed',     max: 5, color: '#44aaff' },
-  maxHpBoost:    { name: 'TOUGHNESS',      icon: 'heart',  desc: '+5 max HP (heals too)',    max: 5, color: '#ff88aa' },
-  regenBoost:    { name: 'REGENERATION',   icon: 'cross',  desc: 'Regen HP over time',       max: 3, color: '#44ff88' },
-  projSpeed:     { name: 'ARM STRENGTH',   icon: 'arm',    desc: '+20% throw speed',         max: 5, color: '#ffaa44' },
-  multiShot:     { name: 'MULTI-THROW',    icon: 'target', desc: '+1 extra projectile',      max: 3, color: '#ff44ff' },
-  cooldownReduce:{ name: 'QUICK HANDS',    icon: 'bolt',   desc: '-20% throw cooldown',      max: 4, color: '#ffff44' },
-  vampirism:     { name: 'VAMPIRISM',      icon: 'fangs',  desc: 'Heal on enemy kill',       max: 3, color: '#aa44ff' },
+  dmgBoost:       { name: 'DAMAGE UP',      icon: 'sword',   desc: '+20% throwable damage',        max: 5, color: '#ff4444' },
+  speedBoost:     { name: 'SPEED UP',        icon: 'wind',    desc: '+12% movement speed',          max: 5, color: '#44aaff' },
+  maxHpBoost:     { name: 'TOUGHNESS',       icon: 'heart',   desc: '+5 max HP (heals too)',         max: 5, color: '#ff88aa' },
+  regenBoost:     { name: 'REGENERATION',    icon: 'cross',   desc: 'Regen HP over time',            max: 3, color: '#44ff88' },
+  projSpeed:      { name: 'ARM STRENGTH',    icon: 'arm',     desc: '+15% throw speed',              max: 5, color: '#ffaa44' },
+  multiShot:      { name: 'MULTI-THROW',     icon: 'target',  desc: '+1 extra projectile',           max: 3, color: '#ff44ff' },
+  cooldownReduce: { name: 'QUICK HANDS',     icon: 'bolt',    desc: '-15% throw cooldown',           max: 4, color: '#ffff44' },
+  vampirism:      { name: 'VAMPIRISM',       icon: 'fangs',   desc: 'Heal on enemy kill',            max: 3, color: '#aa44ff' },
+  shield:         { name: 'ENERGY SHIELD',   icon: 'shield',  desc: 'Block 1 hit per round',         max: 3, color: '#44ddff' },
+  thorns:         { name: 'THORNS',          icon: 'thorns',  desc: 'Reflect damage to attackers',   max: 3, color: '#ff8844' },
+  explosiveShot:  { name: 'EXPLOSIVE SHOT',  icon: 'boom',    desc: 'Projectiles explode on hit',    max: 2, color: '#ff6622' },
+  dash:           { name: 'DODGE ROLL',      icon: 'dash',    desc: 'Double-tap to dash',            max: 2, color: '#88ffcc' },
+  freezeAura:     { name: 'FREEZE AURA',     icon: 'snow',    desc: 'Slow nearby enemies',           max: 2, color: '#88ccff' },
+  luckyDrop:      { name: 'LUCKY DROPS',     icon: 'star',    desc: 'Enemies drop HP pickups',       max: 3, color: '#ffdd44' },
 };
 
 // Canvas-drawn icons for endless mode powerups (no emojis)
@@ -397,6 +411,93 @@ function drawEndlessIcon(ctx, type, cx, cy, size, color) {
       ctx.fill();
       break;
     }
+    case 'shield': { // shield shape
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - s*0.8);
+      ctx.lineTo(cx + s*0.7, cy - s*0.4);
+      ctx.lineTo(cx + s*0.6, cy + s*0.3);
+      ctx.lineTo(cx, cy + s*0.8);
+      ctx.lineTo(cx - s*0.6, cy + s*0.3);
+      ctx.lineTo(cx - s*0.7, cy - s*0.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(1, size / 16);
+      ctx.stroke();
+      break;
+    }
+    case 'thorns': { // spiky circle
+      ctx.beginPath();
+      for (let i = 0; i < 12; i++) {
+        const r2 = i % 2 === 0 ? s*0.8 : s*0.45;
+        const angle = (i * Math.PI / 6) - Math.PI / 2;
+        const px = cx + Math.cos(angle) * r2;
+        const py = cy + Math.sin(angle) * r2;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'boom': { // explosion burst
+      ctx.beginPath();
+      ctx.arc(cx, cy, s*0.3, 0, Math.PI*2);
+      ctx.fill();
+      ctx.lineWidth = Math.max(2, size / 10);
+      for (let i = 0; i < 8; i++) {
+        const angle = i * Math.PI / 4;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(angle) * s*0.4, cy + Math.sin(angle) * s*0.4);
+        ctx.lineTo(cx + Math.cos(angle) * s*0.85, cy + Math.sin(angle) * s*0.85);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'dash': { // arrow swoosh
+      ctx.lineWidth = Math.max(2.5, size / 8);
+      ctx.beginPath();
+      ctx.moveTo(cx - s*0.7, cy + s*0.2);
+      ctx.quadraticCurveTo(cx - s*0.1, cy + s*0.2, cx + s*0.5, cy - s*0.1);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx + s*0.5, cy - s*0.1);
+      ctx.lineTo(cx + s*0.15, cy - s*0.35);
+      ctx.moveTo(cx + s*0.5, cy - s*0.1);
+      ctx.lineTo(cx + s*0.2, cy + s*0.2);
+      ctx.stroke();
+      // speed lines
+      ctx.lineWidth = Math.max(1.5, size / 14);
+      for (let i = 0; i < 3; i++) {
+        const yy = cy - s*0.3 + i * s*0.3;
+        ctx.beginPath();
+        ctx.moveTo(cx - s*0.85, yy);
+        ctx.lineTo(cx - s*0.45, yy);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'snow': { // snowflake
+      ctx.lineWidth = Math.max(1.5, size / 12);
+      for (let i = 0; i < 6; i++) {
+        const angle = i * Math.PI / 3;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        const ex = cx + Math.cos(angle) * s*0.8;
+        const ey = cy + Math.sin(angle) * s*0.8;
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+        // branches
+        const mx = cx + Math.cos(angle) * s*0.5;
+        const my = cy + Math.sin(angle) * s*0.5;
+        ctx.beginPath();
+        ctx.moveTo(mx, my);
+        ctx.lineTo(mx + Math.cos(angle + 0.7) * s*0.25, my + Math.sin(angle + 0.7) * s*0.25);
+        ctx.moveTo(mx, my);
+        ctx.lineTo(mx + Math.cos(angle - 0.7) * s*0.25, my + Math.sin(angle - 0.7) * s*0.25);
+        ctx.stroke();
+      }
+      break;
+    }
   }
   ctx.restore();
 }
@@ -434,6 +535,8 @@ function startEndless() {
   endless.modifier = null;
   // Reset power-ups
   for (const k in endless.powerups) endless.powerups[k] = 0;
+  endless.shieldCharges = 0;
+  endless.dashCooldown = 0;
 
   // Set up arena
   const aW = endless.arenaW;
@@ -524,6 +627,13 @@ function endlessNextRound() {
   endless.bossActive = false;
   endless.modifier = null;
 
+  // Recharge shield at start of each round
+  if (endless.powerups.shield > 0) {
+    endless.shieldCharges = endless.powerups.shield;
+  }
+  // Reset dash cooldown
+  endless.dashCooldown = 0;
+
   const r = endless.round;
 
   // Clear leftover projectiles
@@ -582,10 +692,10 @@ function endlessNextRound() {
   }
 
   // ── NORMAL ROUND (with possible modifier) ──
-  // Scale: more enemies & tougher each round
-  const baseCount = 3 + Math.floor(r * 1.5);
-  endless.spawnsLeft = Math.min(baseCount, 30);
-  endless.spawnTimer = 30;
+  // Scale: more enemies each round but gentler curve
+  const baseCount = 2 + Math.floor(r * 0.8) + Math.floor(r / 5);
+  endless.spawnsLeft = Math.min(baseCount, 25);
+  endless.spawnTimer = 40;
 
   // Roll for round modifier (not on boss rounds)
   if (r >= 3 && !endlessIsBossRound(r)) {
@@ -635,6 +745,10 @@ function endlessApplyPowerup(key) {
     player.maxHp += 5;
     player.hp = Math.min(player.hp + 5, player.maxHp);
   }
+  if (key === 'shield') {
+    // Gain shield charges immediately
+    endless.shieldCharges = pu.shield;
+  }
 }
 
 function endlessGetEnemyForRound(round) {
@@ -668,9 +782,9 @@ function endlessSpawnEnemy() {
   const aX = endless.arenaX, aW = endless.arenaW, aH = endless.arenaH;
   const floorY = endless.arenaY + aH;
 
-  // HP scales with round: base * (1 + round*0.15)
-  let hpScale = 1 + r * 0.15;
-  let spdScale = 1 + r * 0.03;
+  // HP scales with round: gentler curve
+  let hpScale = 1 + r * 0.08;
+  let spdScale = 1 + r * 0.02;
   // Apply round modifiers
   if (endless.modifier) {
     if (endless.modifier.name === 'SWARM') hpScale *= 0.5;
@@ -1677,6 +1791,7 @@ function syncEnemyData() {
     enemies.endlessModifier = endless.modifier ? endless.modifier.name : null;
     enemies.endlessBossActive = endless.bossActive;
     enemies.endlessPowerups = { ...endless.powerups };
+    enemies.endlessShieldCharges = endless.shieldCharges;
     enemies.endlessSpawnsLeft = endless.spawnsLeft;
     enemies.endlessShopChoices = endless.shopChoices;
     enemies.endlessShopSel = endless.shopSelection;
@@ -1924,6 +2039,7 @@ function applyEnemyData() {
       if (k in endless.powerups) endless.powerups[k] = d.endlessPowerups[k];
     }
   }
+  if (typeof d.endlessShieldCharges === 'number') endless.shieldCharges = d.endlessShieldCharges;
   if (d.endlessShopChoices) endless.shopChoices = d.endlessShopChoices;
   if (typeof d.endlessShopSel === 'number') endless.shopSelection = d.endlessShopSel;
   if (d.endlessIntermission !== undefined) endless.intermission = d.endlessIntermission;
@@ -4057,7 +4173,7 @@ function throwProjectile() {
   // Endless mode cooldown reduction
   let baseCooldown = 18;
   if (state === 'endless' && endless.powerups.cooldownReduce > 0) {
-    baseCooldown = Math.round(18 * Math.pow(0.8, endless.powerups.cooldownReduce));
+    baseCooldown = Math.round(18 * Math.pow(0.85, endless.powerups.cooldownReduce));
   }
   p.throwCooldown = cheats.noCooldown ? 0 : baseCooldown;
   // Aim: mouse on PC, joystick on touch, fallback to facing direction
@@ -4065,7 +4181,7 @@ function throwProjectile() {
   let pjSpd = cheats.bigProjectiles ? 20 : 12;
   // Endless mode projectile speed + damage boost
   if (state === 'endless' && endless.powerups.projSpeed > 0) {
-    pjSpd *= (1 + endless.powerups.projSpeed * 0.2);
+    pjSpd *= (1 + endless.powerups.projSpeed * 0.15);
   }
   // Endless multi-shot
   const endlessExtraShots = (state === 'endless') ? endless.powerups.multiShot : 0;
@@ -4090,7 +4206,8 @@ function throwProjectile() {
   }
   const pjSize = cheats.bigProjectiles ? 50 : 28;
   // Endless damage multiplier stored on projectile
-  const endlessDmgMult = (state === 'endless') ? (1 + endless.powerups.dmgBoost * 0.25) : 1;
+  const endlessDmgMult = (state === 'endless') ? (1 + endless.powerups.dmgBoost * 0.20) : 1;
+  const isExplosive = (state === 'endless') && endless.powerups.explosiveShot > 0;
   projectiles.push({
     x: p.x + p.w / 2,
     y: p.y + p.h / 3,
@@ -4100,6 +4217,8 @@ function throwProjectile() {
     h: pjSize,
     life: 100,
     dmgMult: endlessDmgMult,
+    explosive: isExplosive,
+    explosionRadius: isExplosive ? (80 + endless.powerups.explosiveShot * 40) : 0,
   });
   // Extra projectiles from multiShot powerup
   for (let es = 0; es < endlessExtraShots; es++) {
@@ -4114,6 +4233,8 @@ function throwProjectile() {
       h: pjSize,
       life: 100,
       dmgMult: endlessDmgMult,
+      explosive: isExplosive,
+      explosionRadius: isExplosive ? (80 + endless.powerups.explosiveShot * 40) : 0,
     });
   }
 }
@@ -4623,11 +4744,33 @@ function update() {
   let pSpeed = cheats.speedBoost ? PLAYER_SPEED * 2 : PLAYER_SPEED;
   // Endless mode speed boost powerup
   if ((state === 'endless' || state === 'endlessShop') && endless.powerups.speedBoost > 0) {
-    pSpeed *= (1 + endless.powerups.speedBoost * 0.15);
+    pSpeed *= (1 + endless.powerups.speedBoost * 0.12);
   }
   if (left) { p.vx = -pSpeed; p.facing = -1; }
   else if (right) { p.vx = pSpeed; p.facing = 1; }
   else { p.vx *= 0.7; }
+
+  // Dash / dodge roll (endless powerup)
+  if (state === 'endless' && endless.powerups.dash > 0 && endless.dashCooldown <= 0) {
+    // Detect double-tap: track last direction + time
+    if (!endless._dashState) endless._dashState = { lastDir: 0, lastTime: 0 };
+    const now = Date.now();
+    const dashDir = left ? -1 : right ? 1 : 0;
+    if (dashDir !== 0) {
+      if (dashDir === endless._dashState.lastDir && now - endless._dashState.lastTime < 250) {
+        // Execute dash!
+        const dashDist = endless.powerups.dash >= 2 ? 180 : 120;
+        p.x += dashDir * dashDist;
+        p.iFrames = 20;
+        endless.dashCooldown = endless.powerups.dash >= 2 ? 50 : 80;
+        spawnParticles(p.x + p.w/2, p.y + p.h/2, '#88ffcc', 12);
+        endless._dashState.lastDir = 0;
+      } else {
+        endless._dashState.lastDir = dashDir;
+        endless._dashState.lastTime = now;
+      }
+    }
+  }
 
   // Jump buffer & coyote time — only set on key press (rising edge), not hold
   if (up && !p.prevUp) p.jumpBuffer = 8;
@@ -6966,7 +7109,7 @@ function update() {
 
     // Regen powerup
     if (state === 'endless' && endless.powerups.regenBoost > 0 && player.alive) {
-      const regenRate = [600, 420, 240][endless.powerups.regenBoost - 1]; // frames
+      const regenRate = [480, 300, 180][endless.powerups.regenBoost - 1]; // frames
       if (endless.roundTimer % regenRate === 0 && player.hp < player.maxHp) {
         player.hp++;
       }
@@ -6974,8 +7117,28 @@ function update() {
 
     // Speed powerup modifies player speed
     if (state === 'endless') {
-      const spdMult = 1 + endless.powerups.speedBoost * 0.15;
+      const spdMult = 1 + endless.powerups.speedBoost * 0.12;
       // Applied in movement: player.vx is already set. We just clamp differently.
+    }
+
+    // Dash cooldown tick
+    if (endless.dashCooldown > 0) endless.dashCooldown--;
+
+    // Freeze aura: slow nearby enemies
+    if (state === 'endless' && endless.powerups.freezeAura > 0 && player.alive) {
+      const freezeRadius = 120 + endless.powerups.freezeAura * 60;
+      for (const e of endless.enemies) {
+        if (e.dead) continue;
+        const dx = (e.x + e.w/2) - (player.x + player.w/2);
+        const dy = (e.y + e.h/2) - (player.y + player.h/2);
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < freezeRadius) {
+          const slowFactor = 0.6 - endless.powerups.freezeAura * 0.1;
+          e.speed = (ENDLESS_ENEMY_TIERS.find(t => t.type === e.type)?.baseSpeed || 1.5) * slowFactor;
+          // Visual frost particles (occasional)
+          if (Math.random() < 0.03) spawnParticles(e.x + e.w/2, e.y + e.h/3, '#88ccff', 2);
+        }
+      }
     }
 
     // ── SPAWN ENEMIES (host only in MP) ──
@@ -6985,7 +7148,7 @@ function update() {
         endlessSpawnEnemy();
         endless.spawnsLeft--;
         // Spawn interval gets shorter in later rounds
-        endless.spawnTimer = Math.max(15, 60 - endless.round * 2);
+        endless.spawnTimer = Math.max(25, 70 - endless.round * 2);
       }
     }
 
@@ -7195,16 +7358,38 @@ function update() {
 
       // Contact damage to player
       if (player.alive && player.iFrames <= 0 && rectsOverlap(player, e)) {
-        player.hp -= e.dmg;
-        player.iFrames = 40;
-        shakeTimer = 10;
-        spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#ff4444', 10);
-        if (player.hp <= 0) {
-          handlePlayerDeath();
-          // Save high score
-          if (endless.round > endless.highScore) {
-            endless.highScore = endless.round;
-            localStorage.setItem('endlessHighScore', String(endless.highScore));
+        // Shield blocks the hit
+        if (endless.shieldCharges > 0) {
+          endless.shieldCharges--;
+          player.iFrames = 30;
+          shakeTimer = 6;
+          spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#44ddff', 15);
+          screenFlash = 5;
+          screenFlashColor = '#44ddff44';
+        } else {
+          player.hp -= e.dmg;
+          player.iFrames = 40;
+          shakeTimer = 10;
+          spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#ff4444', 10);
+          // Thorns: reflect damage back to attacker
+          if (endless.powerups.thorns > 0 && !e.dead) {
+            const thornsDmg = endless.powerups.thorns;
+            e.hp -= thornsDmg;
+            e.iFrames = 5;
+            spawnParticles(e.x + e.w/2, e.y + e.h/3, '#ff8844', 8);
+            if (e.hp <= 0) {
+              e.dead = true;
+              endless.totalKills++;
+              spawnParticles(e.x + e.w/2, e.y + e.h/2, e.color, 15);
+            }
+          }
+          if (player.hp <= 0) {
+            handlePlayerDeath();
+            // Save high score
+            if (endless.round > endless.highScore) {
+              endless.highScore = endless.round;
+              localStorage.setItem('endlessHighScore', String(endless.highScore));
+            }
           }
         }
       }
@@ -7233,6 +7418,14 @@ function update() {
         if (b.life !== undefined) { b.life--; if (b.life <= 0) { bullets.splice(i, 1); continue; } }
         // Hit player
         if (player.alive && player.iFrames <= 0 && rectsOverlap(player, b)) {
+          // Shield blocks bullet too
+          if (endless.shieldCharges > 0) {
+            endless.shieldCharges--;
+            player.iFrames = 20;
+            spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#44ddff', 10);
+            bullets.splice(i, 1);
+            continue;
+          }
           const dmg = b.dmg || 1;
           player.hp -= dmg;
           player.iFrames = 30;
@@ -7297,6 +7490,42 @@ function update() {
           e.iFrames = 5;
           spawnParticles(e.x + e.w / 2, e.y + e.h / 3, e.color, 8);
           shakeTimer = 4;
+          // Explosive shot: AoE damage on hit
+          if (proj.explosive && proj.explosionRadius > 0) {
+            const exR = proj.explosionRadius;
+            const exCx = e.x + e.w/2, exCy = e.y + e.h/2;
+            spawnParticles(exCx, exCy, '#ff6622', 25);
+            spawnParticles(exCx, exCy, '#ffaa44', 15);
+            screenFlash = 5;
+            screenFlashColor = '#ff662244';
+            shakeTimer = 8;
+            for (let aei = endless.enemies.length - 1; aei >= 0; aei--) {
+              if (aei === ei) continue;
+              const ae = endless.enemies[aei];
+              if (ae.dead) continue;
+              const adx = (ae.x + ae.w/2) - exCx;
+              const ady = (ae.y + ae.h/2) - exCy;
+              if (Math.sqrt(adx*adx + ady*ady) < exR) {
+                const aoeDmg = Math.ceil(dmg * 0.5);
+                ae.hp -= aoeDmg;
+                ae.iFrames = 5;
+                spawnParticles(ae.x + ae.w/2, ae.y + ae.h/3, ae.color, 6);
+                if (ae.hp <= 0) {
+                  ae.dead = true;
+                  endless.totalKills++;
+                  spawnParticles(ae.x + ae.w/2, ae.y + ae.h/2, ae.color, 15);
+                  if (endless.powerups.vampirism > 0 && player.alive) {
+                    player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
+                  }
+                  // Lucky drop from AoE kill
+                  if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12) {
+                    spawnParticles(ae.x + ae.w/2, ae.y + ae.h/2, '#44ff44', 5);
+                    if (player.alive) player.hp = Math.min(player.hp + 2, player.maxHp);
+                  }
+                }
+              }
+            }
+          }
           if (e.hp <= 0) {
             e.dead = true;
             endless.totalKills++;
@@ -7306,6 +7535,11 @@ function update() {
             // Vampirism heal
             if (endless.powerups.vampirism > 0 && player.alive) {
               player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
+            }
+            // Lucky drop: chance to spawn HP
+            if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12) {
+              spawnParticles(e.x + e.w/2, e.y + e.h/2, '#44ff44', 5);
+              if (player.alive) player.hp = Math.min(player.hp + 2, player.maxHp);
             }
           }
           hit = true;
@@ -8400,6 +8634,32 @@ function draw() {
       const pOffY = p.h - drawH;
       ctx.drawImage(playerImg, px + pOffX, py - runBounce + pOffY, drawW, drawH);
       ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    // Freeze aura visual (endless mode)
+    if ((state === 'endless') && endless.powerups.freezeAura > 0) {
+      const freezeR = 120 + endless.powerups.freezeAura * 60;
+      ctx.save();
+      ctx.globalAlpha = 0.08 + Math.sin(gameTimer * 0.05) * 0.04;
+      ctx.fillStyle = '#88ccff';
+      ctx.beginPath();
+      ctx.arc(px + p.w/2, py + p.h/2, freezeR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    // Shield aura visual (endless mode)
+    if ((state === 'endless' || state === 'endlessShop') && endless.shieldCharges > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.25 + Math.sin(gameTimer * 0.08) * 0.1;
+      ctx.strokeStyle = '#44ddff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px + p.w/2, py + p.h/2, p.w * 0.8, 0, Math.PI * 2);
+      ctx.stroke();
       ctx.globalAlpha = 1;
       ctx.restore();
     }
@@ -10030,6 +10290,33 @@ function draw() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 12px monospace';
     ctx.fillText(`HP: ${player.hp}/${player.maxHp}`, hpBarX + 5, hpBarY + 15);
+
+    // Shield charges (below HP bar)
+    if (endless.powerups.shield > 0) {
+      const shieldY = hpBarY + hpBarH + 6;
+      for (let si = 0; si < endless.powerups.shield; si++) {
+        const sx = hpBarX + si * 20;
+        ctx.fillStyle = si < endless.shieldCharges ? '#44ddff' : '#333344';
+        ctx.beginPath();
+        ctx.moveTo(sx + 8, shieldY);
+        ctx.lineTo(sx + 15, shieldY + 4);
+        ctx.lineTo(sx + 13, shieldY + 12);
+        ctx.lineTo(sx + 8, shieldY + 16);
+        ctx.lineTo(sx + 3, shieldY + 12);
+        ctx.lineTo(sx + 1, shieldY + 4);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // Dash cooldown indicator
+    if (endless.powerups.dash > 0) {
+      const dashReady = endless.dashCooldown <= 0;
+      ctx.fillStyle = dashReady ? '#88ffcc' : '#555';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(dashReady ? 'DASH READY' : 'DASH...', hpBarX, hpBarY + (endless.powerups.shield > 0 ? 42 : 30));
+    }
 
     // Round counter (top-center)
     ctx.textAlign = 'center';
