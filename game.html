@@ -4923,7 +4923,8 @@ function update() {
     }
   }
 
-  // ── Boss Minions Update ──
+  // ── Boss Minions Update ── (skip if bigWall doesn't exist, e.g. endless mode)
+  if (bigWall) {
   // Arena floor reference for minion clamping
   const mArenaH = 800;
   const mArenaTopY = bigWall.y + 40;
@@ -4987,6 +4988,7 @@ function update() {
       if (bossMinions[i].dead) bossMinions.splice(i, 1);
     }
   }
+  } // end if (bigWall) — boss minions update
 
   // ── Projectiles (player throws) ──
   if (p.throwCooldown > 0) p.throwCooldown--;
