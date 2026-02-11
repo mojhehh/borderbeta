@@ -93,6 +93,16 @@ const epProjectileImgs = []; // filled after load
 function setupEpImgs() { epProjectileImgs.push(epsteinFilesImg, hawkingImg, clintonImg, muskImg, girlImg); }
 setTimeout(setupEpImgs, 500);
 
+// Image lookup for endless mode enemy rendering
+const images = {
+  guard: guardImg,
+  boss: bossImg,
+  epstein: epsteinImg,
+  clinton: clintonImg,
+  musk: muskImg,
+  hawking: hawkingImg,
+};
+
 // Helper: get image height for a given width, preserving aspect ratio (fallback 1.3x)
 function imgH(img, w) {
   if (img.naturalWidth && img.naturalHeight) return w * (img.naturalHeight / img.naturalWidth);
