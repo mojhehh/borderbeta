@@ -1939,10 +1939,9 @@ function applyEnemyData() {
       if (d.gameState === 'cutscene' && state !== 'cutscene') {
         cutscene.active = true;
       }
-      // Guest entering endless from shop — heal
+      // Guest entering endless from shop — full heal
       if (d.gameState === 'endless' && oldState === 'endlessShop') {
-        const healAmt = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : Math.ceil(player.maxHp * 0.2);
-        player.hp = Math.min(player.hp + healAmt, player.maxHp);
+        player.hp = player.maxHp;
         player.iFrames = 60;
       }
       // Guest entering shop from endless — clear bullets
@@ -7458,9 +7457,8 @@ function update() {
       endless.bossActive = false;
       endless.modifier = null;
       endlessGenerateShop();
-      // Heal player between rounds (more after boss rounds)
-      const healAmount = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : Math.ceil(player.maxHp * 0.2);
-      player.hp = Math.min(player.hp + healAmount, player.maxHp);
+      // Heal player between rounds — full heal
+      player.hp = player.maxHp;
       player.iFrames = 60;
       bullets = [];
       // Flash
