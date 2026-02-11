@@ -230,7 +230,7 @@ let endless = {
   intermission: false,// between rounds (shop open)
   intermissionTimer: 0,
   arenaW: 1600,
-  arenaH: 700,
+  arenaH: 600,
   arenaX: 0,
   arenaY: 0,
   platforms: [],
@@ -247,6 +247,9 @@ let endless = {
   },
   shopChoices: [],     // 3 power-up options for current round
   shopSelection: 0,
+  boss: null,          // current boss enemy ref
+  bossActive: false,   // is a boss round?
+  modifier: null,      // current round modifier
   highScore: parseInt(localStorage.getItem('endlessHighScore') || '0'),
 };
 
@@ -426,6 +429,9 @@ function startEndless() {
   endless.intermissionTimer = 0;
   endless.shopChoices = [];
   endless.shopSelection = 0;
+  endless.boss = null;
+  endless.bossActive = false;
+  endless.modifier = null;
   // Reset power-ups
   for (const k in endless.powerups) endless.powerups[k] = 0;
 
@@ -441,12 +447,12 @@ function startEndless() {
     { x: endless.arenaX - 30, y: endless.arenaY, w: 30, h: aH + 30, isSideWall: true },
     { x: endless.arenaX + aW, y: endless.arenaY, w: 30, h: aH + 30, isSideWall: true },
     // Platforms (isPlatform: true so player can jump through from below)
-    { x: endless.arenaX + 100, y: endless.arenaY + aH - 160, w: 160, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW/2 - 100, y: endless.arenaY + aH - 280, w: 200, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW - 260, y: endless.arenaY + aH - 160, w: 160, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW/2 - 80, y: endless.arenaY + aH - 440, w: 160, h: 14, isPlatform: true },
-    { x: endless.arenaX + 250, y: endless.arenaY + aH - 360, w: 120, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW - 370, y: endless.arenaY + aH - 360, w: 120, h: 14, isPlatform: true },
+    { x: endless.arenaX + 100, y: endless.arenaY + aH - 140, w: 160, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW/2 - 100, y: endless.arenaY + aH - 240, w: 200, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW - 260, y: endless.arenaY + aH - 140, w: 160, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW/2 - 80, y: endless.arenaY + aH - 370, w: 160, h: 14, isPlatform: true },
+    { x: endless.arenaX + 250, y: endless.arenaY + aH - 300, w: 120, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW - 370, y: endless.arenaY + aH - 300, w: 120, h: 14, isPlatform: true },
   ];
 
   // Reset player
@@ -485,20 +491,114 @@ function startEndless() {
   endlessNextRound();
 }
 
+// Boss definitions for special endless rounds
+const ENDLESS_BOSS_ROUNDS = {
+  10:  { name: 'EL CAPITAN',     color: '#ff8800', w: 100, h: 130, hp: 80,  speed: 1.5, dmg: 3, attacks: ['charge','slam'],       imgKey: 'boss' },
+  25:  { name: 'THE KINGPIN',    color: '#ff44ff', w: 110, h: 140, hp: 200, speed: 1.8, dmg: 4, attacks: ['charge','slam','summon'], imgKey: 'epstein' },
+  50:  { name: 'LA SOMBRA',      color: '#44ffaa', w: 120, h: 150, hp: 500, speed: 2.0, dmg: 5, attacks: ['charge','slam','summon','barrage'], imgKey: 'hawking' },
+  75:  { name: 'DOBLE MUERTE',   color: '#ff4444', w: 100, h: 130, hp: 350, speed: 2.2, dmg: 4, attacks: ['charge','slam','barrage'], imgKey: 'boss', count: 2 },
+  100: { name: 'EL DIABLO',      color: '#ffd700', w: 140, h: 170, hp: 1000,speed: 2.5, dmg: 6, attacks: ['charge','slam','summon','barrage','laser'], imgKey: 'hawking' },
+  150: { name: 'THE TRIBUNAL',   color: '#ff2222', w: 110, h: 140, hp: 600, speed: 2.0, dmg: 5, attacks: ['charge','slam','summon','barrage'], imgKey: 'boss', count: 3 },
+  200: { name: 'GOD EMPEROR',    color: '#ffffff', w: 160, h: 190, hp: 2500,speed: 3.0, dmg: 8, attacks: ['charge','slam','summon','barrage','laser'], imgKey: 'hawking' },
+};
+
+// Round modifiers to add variety
+const ENDLESS_ROUND_MODIFIERS = [
+  { name: 'SWARM',      desc: 'Double enemies, half HP!',  chance: 0.15, minRound: 4 },
+  { name: 'ARMORED',    desc: 'Enemies have 2x HP!',       chance: 0.12, minRound: 5 },
+  { name: 'BLITZ',      desc: 'Enemies are faster!',       chance: 0.12, minRound: 3 },
+  { name: 'MARKSMAN',   desc: 'Enemies shoot more!',       chance: 0.10, minRound: 6 },
+  { name: 'DARKNESS',   desc: 'Limited visibility!',       chance: 0.08, minRound: 8 },
+];
+
+function endlessIsBossRound(round) {
+  return ENDLESS_BOSS_ROUNDS[round] !== undefined;
+}
+
 function endlessNextRound() {
   endless.round++;
   endless.roundTimer = 0;
   endless.intermission = false;
+  endless.boss = null;
+  endless.bossActive = false;
+  endless.modifier = null;
 
-  // Scale: more enemies & tougher each round
   const r = endless.round;
-  const baseCount = 3 + Math.floor(r * 1.5);
-  endless.spawnsLeft = Math.min(baseCount, 25); // cap at 25 per round
-  endless.spawnTimer = 30; // first spawn soon
 
   // Clear leftover projectiles
   bullets = [];
   epsteinProjectiles = [];
+
+  // ── BOSS ROUND ──
+  if (endlessIsBossRound(r)) {
+    const def = ENDLESS_BOSS_ROUNDS[r];
+    const hpScale = 1 + (r - 10) * 0.05;
+    const bossCount = def.count || 1;
+    endless.bossActive = true;
+    endless.spawnsLeft = 0;
+    endless.enemies = [];
+
+    for (let bi = 0; bi < bossCount; bi++) {
+      const bossHp = Math.ceil(def.hp * hpScale / (bossCount > 1 ? 1.3 : 1));
+      const aX = endless.arenaX, aW = endless.arenaW, aH = endless.arenaH;
+      const floorY = endless.arenaY + aH;
+      const spawnX = bossCount > 1
+        ? aX + (aW / (bossCount + 1)) * (bi + 1) - def.w / 2
+        : aX + aW / 2 - def.w / 2;
+
+      endless.enemies.push({
+        x: spawnX, y: floorY - def.h - 2,
+        w: def.w, h: def.h,
+        hp: bossHp, maxHp: bossHp,
+        speed: def.speed,
+        dir: bi % 2 === 0 ? -1 : 1,
+        type: 'boss',
+        imgKey: def.imgKey,
+        color: def.color,
+        frame: 0, frameTimer: 0,
+        vy: 0, dead: false,
+        shootCooldown: 60,
+        attackTimer: 120 + bi * 40,
+        dmg: def.dmg,
+        iFrames: 0,
+        isBoss: true,
+        bossName: bossCount > 1 ? `${def.name} ${bi + 1}` : def.name,
+        attacks: def.attacks,
+        currentAttack: null,
+        chargeVx: 0,
+        slamming: false,
+        charging: false,
+        summonCooldown: 300,
+        barrageCooldown: 200,
+      });
+    }
+
+    // Screen flash + shake
+    screenFlash = 40;
+    screenFlashColor = def.color + '88';
+    shakeTimer = 30;
+    return;
+  }
+
+  // ── NORMAL ROUND (with possible modifier) ──
+  // Scale: more enemies & tougher each round
+  const baseCount = 3 + Math.floor(r * 1.5);
+  endless.spawnsLeft = Math.min(baseCount, 30);
+  endless.spawnTimer = 30;
+
+  // Roll for round modifier (not on boss rounds)
+  if (r >= 3 && !endlessIsBossRound(r)) {
+    for (const mod of ENDLESS_ROUND_MODIFIERS) {
+      if (r >= mod.minRound && Math.random() < mod.chance) {
+        endless.modifier = mod;
+        // Apply modifier effects to spawn count
+        if (mod.name === 'SWARM') {
+          endless.spawnsLeft = Math.min(endless.spawnsLeft * 2, 40);
+        }
+        break;
+      }
+    }
+  }
 }
 
 function endlessGenerateShop() {
@@ -568,15 +668,21 @@ function endlessSpawnEnemy() {
   const floorY = endless.arenaY + aH;
 
   // HP scales with round: base * (1 + round*0.15)
-  const hpScale = 1 + r * 0.15;
-  const spdScale = 1 + r * 0.03; // slight speedup
+  let hpScale = 1 + r * 0.15;
+  let spdScale = 1 + r * 0.03;
+  // Apply round modifiers
+  if (endless.modifier) {
+    if (endless.modifier.name === 'SWARM') hpScale *= 0.5;
+    if (endless.modifier.name === 'ARMORED') hpScale *= 2;
+    if (endless.modifier.name === 'BLITZ') spdScale *= 1.5;
+  }
   const hp = Math.ceil(template.baseHp * hpScale);
 
   // Spawn from left or right edge
   const side = Math.random() > 0.5 ? 1 : -1;
   const sx = side > 0 ? aX + aW - template.w - 10 : aX + 10;
 
-  endless.enemies.push({
+  const enemy = {
     x: sx,
     y: floorY - template.h - 2,
     w: template.w, h: template.h,
@@ -593,7 +699,12 @@ function endlessSpawnEnemy() {
     attackTimer: 0,
     dmg: template.dmg,
     iFrames: 0,
-  });
+  };
+  // Marksman modifier: faster shooting
+  if (endless.modifier && endless.modifier.name === 'MARKSMAN') {
+    enemy.shootCooldown = Math.floor(enemy.shootCooldown * 0.5);
+  }
+  endless.enemies.push(enemy);
 }
 
 // Title screen / settings
@@ -6696,7 +6807,7 @@ function update() {
 
     // Camera: center on arena
     const camTargetX = endless.arenaX + endless.arenaW / 2 - W / 2;
-    const camTargetY = endless.arenaY - 80;
+    const camTargetY = endless.arenaY + endless.arenaH / 2 - H / 2;
     cameraX += (camTargetX - cameraX) * 0.08;
     cameraY += (camTargetY - cameraY) * 0.08;
 
@@ -6741,11 +6852,139 @@ function update() {
       const dy = py - ey;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
-      // Move toward player
-      const moveSpd = e.speed * (1 + endless.round * 0.01);
-      if (Math.abs(dx) > 30) {
-        e.dir = dx > 0 ? 1 : -1;
-        e.x += e.dir * moveSpd;
+      // ── BOSS AI ──
+      if (e.isBoss) {
+        e.attackTimer--;
+        // Boss attack cycle
+        if (e.attackTimer <= 0 && !e.charging && !e.slamming) {
+          const atk = e.attacks[Math.floor(Math.random() * e.attacks.length)];
+          e.currentAttack = atk;
+          if (atk === 'charge') {
+            e.charging = true;
+            e.chargeVx = (dx > 0 ? 1 : -1) * (e.speed * 4);
+            e.attackTimer = 80;
+            shakeTimer = 10;
+          } else if (atk === 'slam') {
+            e.vy = -16;
+            e.slamming = true;
+            e.attackTimer = 60;
+          } else if (atk === 'summon' && e.summonCooldown <= 0) {
+            // Spawn 2-3 minions
+            const minionCount = 2 + Math.floor(Math.random() * 2);
+            for (let mi = 0; mi < minionCount; mi++) {
+              const template = ENDLESS_ENEMY_TIERS[Math.min(Math.floor(endless.round / 5), ENDLESS_ENEMY_TIERS.length - 1)];
+              const side = Math.random() > 0.5 ? 1 : -1;
+              const mhp = Math.ceil(template.baseHp * (1 + endless.round * 0.1));
+              endless.enemies.push({
+                x: side > 0 ? aX + aW - template.w - 10 : aX + 10,
+                y: floorY - template.h - 2,
+                w: template.w, h: template.h,
+                hp: mhp, maxHp: mhp,
+                speed: template.baseSpeed * 1.2,
+                dir: -side, type: template.type,
+                imgKey: template.imgKey, color: template.color,
+                frame: 0, frameTimer: 0, vy: 0, dead: false,
+                shootCooldown: template.shootCd, attackTimer: 0,
+                dmg: template.dmg, iFrames: 0,
+              });
+            }
+            e.summonCooldown = 400;
+            e.attackTimer = 100;
+            screenFlash = 15;
+            screenFlashColor = e.color + '44';
+          } else if (atk === 'barrage' && (!e.barrageCooldown || e.barrageCooldown <= 0)) {
+            // Fire ring of bullets
+            const bCount = 8 + Math.floor(endless.round / 10) * 2;
+            for (let bi = 0; bi < bCount; bi++) {
+              const angle = (bi / bCount) * Math.PI * 2;
+              const bspd = 3 + endless.round * 0.05;
+              bullets.push({
+                x: ex, y: ey,
+                vx: Math.cos(angle) * bspd,
+                vy: Math.sin(angle) * bspd,
+                w: 8, h: 8, dmg: e.dmg, life: 200,
+              });
+            }
+            e.barrageCooldown = 250;
+            e.attackTimer = 80;
+            shakeTimer = 15;
+          } else if (atk === 'laser') {
+            // Rapid targeted shots
+            for (let li = 0; li < 5; li++) {
+              const spread = (Math.random() - 0.5) * 0.3;
+              const bspd = 5 + endless.round * 0.05;
+              bullets.push({
+                x: ex, y: ey,
+                vx: (dx / dist + spread) * bspd,
+                vy: (dy / dist + spread) * bspd,
+                w: 6, h: 6, dmg: e.dmg, life: 150,
+              });
+            }
+            e.attackTimer = 50;
+          } else {
+            e.attackTimer = 60;
+          }
+        }
+        // Charge movement
+        if (e.charging) {
+          e.x += e.chargeVx;
+          e.chargeVx *= 0.97;
+          if (Math.abs(e.chargeVx) < 0.5) e.charging = false;
+          // Charge hits player
+          if (player.alive && player.iFrames <= 0 && rectsOverlap(player, e)) {
+            player.hp -= e.dmg + 1;
+            player.iFrames = 50;
+            player.vx = e.chargeVx * 0.5;
+            player.vy = -8;
+            shakeTimer = 20;
+            spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#ff4444', 15);
+            if (player.hp <= 0) {
+              handlePlayerDeath();
+              if (endless.round > endless.highScore) { endless.highScore = endless.round; localStorage.setItem('endlessHighScore', String(endless.highScore)); }
+            }
+          }
+        }
+        // Slam landing
+        if (e.slamming && e.vy >= 0 && e.y + e.h >= floorY - 5) {
+          e.slamming = false;
+          shakeTimer = 25;
+          screenFlash = 10;
+          screenFlashColor = e.color + '66';
+          // Shockwave damage
+          const shockDist = 200;
+          if (player.alive && player.iFrames <= 0 && Math.abs(player.x - e.x) < shockDist) {
+            player.hp -= e.dmg;
+            player.iFrames = 40;
+            player.vy = -10;
+            spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#ff4444', 12);
+            if (player.hp <= 0) {
+              handlePlayerDeath();
+              if (endless.round > endless.highScore) { endless.highScore = endless.round; localStorage.setItem('endlessHighScore', String(endless.highScore)); }
+            }
+          }
+          // Slam particles
+          for (let si = 0; si < 20; si++) {
+            spawnParticles(e.x + Math.random() * e.w, floorY, e.color, 2);
+          }
+        }
+        // Cooldown ticks
+        if (e.summonCooldown > 0) e.summonCooldown--;
+        if (e.barrageCooldown > 0) e.barrageCooldown--;
+        // Boss moves toward player (slower than normal AI)
+        if (!e.charging) {
+          if (Math.abs(dx) > 60) {
+            e.dir = dx > 0 ? 1 : -1;
+            e.x += e.dir * e.speed * 0.7;
+          }
+        }
+      } else {
+        // ── NORMAL ENEMY AI ──
+        // Move toward player
+        const moveSpd = e.speed * (1 + endless.round * 0.01);
+        if (Math.abs(dx) > 30) {
+          e.dir = dx > 0 ? 1 : -1;
+          e.x += e.dir * moveSpd;
+        }
       }
 
       // Simple gravity
@@ -6781,21 +7020,23 @@ function update() {
       e.frameTimer++;
       if (e.frameTimer > 8) { e.frameTimer = 0; e.frame = (e.frame + 1) % 4; }
 
-      // Shoot at player
-      e.shootCooldown--;
-      if (e.shootCooldown <= 0 && dist < 500) {
-        e.shootCooldown = ENDLESS_ENEMY_TIERS.find(t => t.type === e.type)?.shootCd || 80;
-        e.shootCooldown += Math.floor(Math.random() * 20);
-        // Fire a bullet toward player
-        const bspd = 3 + endless.round * 0.1;
-        bullets.push({
-          x: ex, y: ey,
-          vx: (dx / dist) * bspd,
-          vy: (dy / dist) * bspd,
-          w: 8, h: 8,
-          dmg: e.dmg,
-          life: 200,
-        });
+      // Shoot at player (only non-boss enemies; bosses use attack AI)
+      if (!e.isBoss) {
+        e.shootCooldown--;
+        if (e.shootCooldown <= 0 && dist < 500) {
+          e.shootCooldown = ENDLESS_ENEMY_TIERS.find(t => t.type === e.type)?.shootCd || 80;
+          e.shootCooldown += Math.floor(Math.random() * 20);
+          // Fire a bullet toward player
+          const bspd = 3 + endless.round * 0.1;
+          bullets.push({
+            x: ex, y: ey,
+            vx: (dx / dist) * bspd,
+            vy: (dy / dist) * bspd,
+            w: 8, h: 8,
+            dmg: e.dmg,
+            life: 200,
+          });
+        }
       }
 
       // Contact damage to player
@@ -6863,14 +7104,17 @@ function update() {
       state = 'endlessShop';
       endless.intermission = true;
       endless.intermissionTimer = 0;
+      endless.bossActive = false;
+      endless.modifier = null;
       endlessGenerateShop();
-      // Heal player slightly between rounds
-      player.hp = Math.min(player.hp + 3, player.maxHp);
+      // Heal player between rounds (more after boss rounds)
+      const healAmount = endlessIsBossRound(endless.round) ? Math.ceil(player.maxHp * 0.5) : 3;
+      player.hp = Math.min(player.hp + healAmount, player.maxHp);
       player.iFrames = 60;
       bullets = [];
       // Flash
       screenFlash = 20;
-      screenFlashColor = '#44ff44';
+      screenFlashColor = endlessIsBossRound(endless.round) ? '#ffd700' : '#44ff44';
     }
 
     // ── SHOP UPDATE ──
@@ -7673,18 +7917,33 @@ function draw() {
         ctx.fillRect(ex, ey - bounce, e.w, e.h);
       }
 
-      // HP bar
-      const hpPct = e.hp / e.maxHp;
-      ctx.fillStyle = '#000000aa';
-      ctx.fillRect(ex, ey - 14 - bounce, e.w, 5);
-      ctx.fillStyle = hpPct > 0.5 ? '#44cc44' : hpPct > 0.25 ? '#ccaa22' : '#cc2222';
-      ctx.fillRect(ex, ey - 14 - bounce, e.w * hpPct, 5);
+      // HP bar (bosses are drawn in HUD, skip here)
+      if (!e.isBoss) {
+        const hpPct = e.hp / e.maxHp;
+        ctx.fillStyle = '#000000aa';
+        ctx.fillRect(ex, ey - 14 - bounce, e.w, 5);
+        ctx.fillStyle = hpPct > 0.5 ? '#44cc44' : hpPct > 0.25 ? '#ccaa22' : '#cc2222';
+        ctx.fillRect(ex, ey - 14 - bounce, e.w * hpPct, 5);
+      }
 
       // Type label
       ctx.fillStyle = e.color + '88';
-      ctx.font = 'bold 9px monospace';
+      ctx.font = e.isBoss ? 'bold 14px monospace' : 'bold 9px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(e.type.toUpperCase(), ex + e.w / 2, ey - 18 - bounce);
+      ctx.fillText(e.isBoss ? e.bossName : e.type.toUpperCase(), ex + e.w / 2, ey - 18 - bounce);
+
+      // Boss glow aura
+      if (e.isBoss) {
+        ctx.save();
+        ctx.globalAlpha = 0.12 + Math.sin(Date.now() / 300) * 0.06;
+        ctx.shadowColor = e.color;
+        ctx.shadowBlur = 30;
+        ctx.fillStyle = e.color;
+        ctx.fillRect(ex - 5, ey - 5, e.w + 10, e.h + 10);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
     }
 
     // Draw bullets (enemy projectiles)
@@ -7696,6 +7955,18 @@ function draw() {
       ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
+    }
+
+    // Darkness modifier — vignette overlay around player
+    if (endless.modifier && endless.modifier.name === 'DARKNESS') {
+      const pcx = player.x + player.w / 2;
+      const pcy = player.y + player.h / 2;
+      const grad = ctx.createRadialGradient(pcx, pcy, 120, pcx, pcy, 400);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(0.5, 'rgba(0,0,0,0.5)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.92)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(endless.arenaX - 30, endless.arenaY, endless.arenaW + 60, endless.arenaH + 30);
     }
   }
 
@@ -9611,11 +9882,84 @@ function draw() {
     ctx.fillText(`ROUND ${endless.round}`, W / 2, 32);
     ctx.shadowBlur = 0;
 
+    // Boss round announcement (first 3 seconds)
+    if (endless.bossActive && endless.roundTimer < 180) {
+      const annAlpha = endless.roundTimer < 30 ? endless.roundTimer / 30 : endless.roundTimer > 150 ? (180 - endless.roundTimer) / 30 : 1;
+      ctx.globalAlpha = annAlpha;
+      const bossEnemy = endless.enemies.find(e => e.isBoss && !e.dead);
+      if (bossEnemy) {
+        ctx.fillStyle = '#000000cc';
+        ctx.fillRect(W / 2 - 250, H / 2 - 60, 500, 100);
+        ctx.strokeStyle = bossEnemy.color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(W / 2 - 250, H / 2 - 60, 500, 100);
+        ctx.fillStyle = '#ff4444';
+        ctx.font = 'bold 16px monospace';
+        ctx.fillText('WARNING — BOSS ROUND', W / 2, H / 2 - 30);
+        ctx.fillStyle = bossEnemy.color;
+        ctx.font = 'bold 28px monospace';
+        ctx.shadowColor = bossEnemy.color;
+        ctx.shadowBlur = 15;
+        ctx.fillText(bossEnemy.bossName, W / 2, H / 2 + 10);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#aaa';
+        ctx.font = '12px monospace';
+        ctx.fillText('Defeat the boss to advance!', W / 2, H / 2 + 30);
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // Enemies remaining
     const remainCount = endless.enemies.length + endless.spawnsLeft;
     ctx.fillStyle = remainCount > 0 ? '#ff8844' : '#44ff88';
     ctx.font = 'bold 14px monospace';
-    ctx.fillText(`Enemies: ${remainCount}`, W / 2, 52);
+    if (endless.bossActive) {
+      const bosses = endless.enemies.filter(e => e.isBoss && !e.dead);
+      if (bosses.length > 0) {
+        ctx.fillStyle = '#ff4444';
+        ctx.fillText('BOSS FIGHT', W / 2, 52);
+      } else {
+        ctx.fillStyle = '#44ff88';
+        ctx.fillText('BOSS DEFEATED!', W / 2, 52);
+      }
+    } else {
+      ctx.fillText(`Enemies: ${remainCount}`, W / 2, 52);
+    }
+
+    // Round modifier indicator
+    if (endless.modifier && state === 'endless') {
+      ctx.fillStyle = '#ffaa00';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(endless.modifier.name + ' - ' + endless.modifier.desc, W / 2, 68);
+    }
+
+    // Boss health bars (below HUD)
+    if (endless.bossActive) {
+      let bossBarIdx = 0;
+      for (const e of endless.enemies) {
+        if (!e.isBoss || e.dead) continue;
+        const bbW = 400, bbH = 16;
+        const bbX = W / 2 - bbW / 2;
+        const bbY = 76 + bossBarIdx * 28;
+        // Bar background
+        ctx.fillStyle = '#00000088';
+        ctx.fillRect(bbX - 2, bbY - 2, bbW + 4, bbH + 4);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(bbX, bbY, bbW, bbH);
+        // HP fill
+        const bHpPct = e.hp / e.maxHp;
+        const grad = ctx.createLinearGradient(bbX, 0, bbX + bbW, 0);
+        grad.addColorStop(0, e.color);
+        grad.addColorStop(1, '#ff2222');
+        ctx.fillStyle = grad;
+        ctx.fillRect(bbX, bbY, bbW * bHpPct, bbH);
+        // Boss name
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`${e.bossName}  ${e.hp}/${e.maxHp}`, W / 2, bbY + 13);
+        bossBarIdx++;
+      }
+    }
 
     // Kill counter + high score (top-right)
     ctx.textAlign = 'right';
@@ -13245,6 +13589,17 @@ function draw() {
       ctx.fillStyle = '#333';
       ctx.font = '10px monospace';
       ctx.fillText('v3.0', W/2, H * 0.94);
+
+      // ── CAMPAIGN MODE COMING SOON TEASER ──
+      const campaignPulse = 0.7 + Math.sin(Date.now() / 800) * 0.3;
+      ctx.globalAlpha = campaignPulse;
+      ctx.fillStyle = '#ffaa00';
+      ctx.font = 'bold 13px monospace';
+      ctx.shadowColor = '#ff880088';
+      ctx.shadowBlur = 10;
+      ctx.fillText('CAMPAIGN MODE — COMING SOON', W / 2, H * 0.97);
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
       
     } else if (menuState === 'multiplayer') {
       // ── MULTIPLAYER SCREEN ──
