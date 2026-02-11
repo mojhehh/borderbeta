@@ -2556,6 +2556,7 @@ let jumpFlashTimer = 0; // visual flash timer when jump triggers (frames)
 
 // Shared touch button renderer — called from each game state's HUD
 let _isTouchDev = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+let touchDashQueued = false; // set true when dash button tapped on touch
 // Auto-detect touch on first touch event (for iPad with keyboard attached)
 window.addEventListener('touchstart', () => { _isTouchDev = true; }, { once: true, passive: true });
 function drawTouchButtons() {
@@ -2642,10 +2643,38 @@ function drawTouchButtons() {
     ctx.fillText('AIM', ACX, ACY + 5);
   }
 
+  // ── DASH BUTTON (center, shown only when dash powerup is active in endless) ──
+  if (state === 'endless' && endless.powerups && endless.powerups.dash > 0) {
+    const dbx = W / 2, dby = MCY + 10, dbr = 38;
+    const cdFrac = endless.dashCooldown > 0 ? endless.dashCooldown / (endless.powerups.dash >= 2 ? 50 : 80) : 0;
+    // Outer ring
+    ctx.globalAlpha = cdFrac > 0 ? 0.15 : 0.35;
+    ctx.strokeStyle = '#88ffcc';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(dbx, dby, dbr, 0, Math.PI * 2); ctx.stroke();
+    // Fill
+    ctx.globalAlpha = cdFrac > 0 ? 0.08 : 0.2;
+    ctx.fillStyle = '#88ffcc';
+    ctx.beginPath(); ctx.arc(dbx, dby, dbr, 0, Math.PI * 2); ctx.fill();
+    // Cooldown sweep
+    if (cdFrac > 0) {
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.moveTo(dbx, dby);
+      ctx.arc(dbx, dby, dbr, -Math.PI/2, -Math.PI/2 + cdFrac * Math.PI * 2);
+      ctx.closePath(); ctx.fill();
+    }
+    // Label
+    ctx.globalAlpha = cdFrac > 0 ? 0.3 : 0.7;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('DASH', dbx, dby);
+  }
+
   ctx.restore();
 }
-
-// Cutscene state
 let cutscene = {
   active: false,
   timer: 0,
@@ -3745,6 +3774,17 @@ canvas.addEventListener('touchstart', e => {
           mpSpectateTarget = alive[mpSpectateIndex].uid;
         }
         return;
+      }
+
+      // Dash button (center, when dash powerup active)
+      const MCY_t = getMoveCenterY();
+      const dashBtnX = W / 2, dashBtnY = MCY_t + 10, dashBtnR = 48;
+      if (state === 'endless' && endless.powerups && endless.powerups.dash > 0 && endless.dashCooldown <= 0) {
+        const ddx = cx - dashBtnX, ddy = cy - dashBtnY;
+        if (Math.sqrt(ddx*ddx + ddy*ddy) < dashBtnR) {
+          touchDashQueued = true;
+          return;
+        }
       }
 
       // Aim joystick (right side)
@@ -4855,27 +4895,41 @@ function update() {
 
   // Dash / dodge roll (endless powerup)
   if (state === 'endless' && endless.powerups.dash > 0 && endless.dashCooldown <= 0) {
-    // Detect double-tap: track last direction + time
-    if (!endless._dashState) endless._dashState = { lastDir: 0, lastTime: 0 };
-    const now = Date.now();
-    const dashDir = left ? -1 : right ? 1 : 0;
-    if (dashDir !== 0) {
-      if (dashDir === endless._dashState.lastDir && now - endless._dashState.lastTime < 250) {
-        // Execute dash!
-        const dashDist = endless.powerups.dash >= 2 ? 180 : 120;
-        p.x += dashDir * dashDist;
-        // Clamp to arena bounds so dash can't teleport through walls
-        p.x = Math.max(endless.arenaX + 5, Math.min(endless.arenaX + endless.arenaW - p.w - 5, p.x));
-        p.iFrames = 20;
-        endless.dashCooldown = endless.powerups.dash >= 2 ? 50 : 80;
-        spawnParticles(p.x + p.w/2, p.y + p.h/2, '#88ffcc', 12);
-        endless._dashState.lastDir = 0;
-      } else {
-        endless._dashState.lastDir = dashDir;
-        endless._dashState.lastTime = now;
+    let doDash = false;
+    let dashDir = 0;
+
+    if (_isTouchDev && touchDashQueued) {
+      // Touch: dash button was tapped — dash in facing direction or movement direction
+      doDash = true;
+      dashDir = left ? -1 : right ? 1 : p.facing;
+      touchDashQueued = false;
+    } else if (!_isTouchDev) {
+      // Keyboard: double-tap left/right within 250ms
+      if (!endless._dashState) endless._dashState = { lastDir: 0, lastTime: 0 };
+      const now = Date.now();
+      dashDir = left ? -1 : right ? 1 : 0;
+      if (dashDir !== 0) {
+        if (dashDir === endless._dashState.lastDir && now - endless._dashState.lastTime < 250) {
+          doDash = true;
+          endless._dashState.lastDir = 0;
+        } else {
+          endless._dashState.lastDir = dashDir;
+          endless._dashState.lastTime = now;
+        }
       }
     }
+
+    if (doDash && dashDir !== 0) {
+      const dashDist = endless.powerups.dash >= 2 ? 180 : 120;
+      p.x += dashDir * dashDist;
+      // Clamp to arena bounds so dash can't teleport through walls
+      p.x = Math.max(endless.arenaX + 5, Math.min(endless.arenaX + endless.arenaW - p.w - 5, p.x));
+      p.iFrames = 20;
+      endless.dashCooldown = endless.powerups.dash >= 2 ? 50 : 80;
+      spawnParticles(p.x + p.w/2, p.y + p.h/2, '#88ffcc', 12);
+    }
   }
+  touchDashQueued = false; // always consume
 
   // Jump buffer & coyote time — only set on key press (rising edge), not hold
   if (up && !p.prevUp) p.jumpBuffer = 8;
