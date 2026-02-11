@@ -645,8 +645,10 @@ function _declinePerfMode() {
   localStorage.setItem('perfPromptDismissed', 'true');
 }
 
-// ── BETA VERSION POPUP ──
-let _showBetaPopup = true;
+// ── BETA VERSION POPUP (only on beta URL) ──
+const _isBetaSite = window.location.pathname.includes('borderbeta');
+let _showBetaPopup = _isBetaSite;
+if (!_isBetaSite) { const bb = document.getElementById('betaBanner'); if (bb) bb.style.display = 'none'; }
 window._betaOkBtn = null;
 function _dismissBetaPopup() { _showBetaPopup = false; }
 
