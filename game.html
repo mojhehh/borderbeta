@@ -229,8 +229,11 @@ let endless = {
   roundTimer: 0,      // frames since round started
   intermission: false,// between rounds (shop open)
   intermissionTimer: 0,
-  arenaW: 1600,
-  arenaH: 600,
+  arenaW: 2400,
+  arenaH: 900,
+  roofY: 0,         // anti-camp descending roof (0 = inactive)
+  roofTimer: 0,     // frames spent near top of arena
+  endlessZoom: 1,   // current zoom level for the arena camera
   arenaX: 0,
   arenaY: 0,
   platforms: [],
@@ -543,20 +546,10 @@ function startEndless() {
   const aH = endless.arenaH;
   endless.arenaX = 200;
   endless.arenaY = GROUND_Y - aH;
-  endless.platforms = [
-    // Floor
-    { x: endless.arenaX, y: endless.arenaY + aH, w: aW, h: 30, isFloor: true },
-    // Walls
-    { x: endless.arenaX - 30, y: endless.arenaY, w: 30, h: aH + 30, isSideWall: true },
-    { x: endless.arenaX + aW, y: endless.arenaY, w: 30, h: aH + 30, isSideWall: true },
-    // Platforms (isPlatform: true so player can jump through from below)
-    { x: endless.arenaX + 100, y: endless.arenaY + aH - 140, w: 160, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW/2 - 100, y: endless.arenaY + aH - 240, w: 200, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW - 260, y: endless.arenaY + aH - 140, w: 160, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW/2 - 80, y: endless.arenaY + aH - 370, w: 160, h: 14, isPlatform: true },
-    { x: endless.arenaX + 250, y: endless.arenaY + aH - 300, w: 120, h: 14, isPlatform: true },
-    { x: endless.arenaX + aW - 370, y: endless.arenaY + aH - 300, w: 120, h: 14, isPlatform: true },
-  ];
+  endless.roofY = 0;
+  endless.roofTimer = 0;
+  endless.endlessZoom = 1;
+  endless.platforms = endlessGeneratePlatforms(endless.arenaX, endless.arenaY, aW, aH, 0);
 
   // Reset player
   const dm = getDiffMult();
@@ -594,6 +587,90 @@ function startEndless() {
   endlessNextRound();
 }
 
+// Generate platform layouts — different layouts for variety, rotated each round
+function endlessGeneratePlatforms(arenaX, arenaY, aW, aH, round) {
+  // Base: floor + walls always present
+  const plats = [
+    { x: arenaX, y: arenaY + aH, w: aW, h: 30, isFloor: true },
+    { x: arenaX - 30, y: arenaY, w: 30, h: aH + 30, isSideWall: true },
+    { x: arenaX + aW, y: arenaY, w: 30, h: aH + 30, isSideWall: true },
+  ];
+  // Pick layout based on round (cycles through 5 different layouts)
+  const layout = round % 5;
+  if (layout === 0) {
+    // Classic — symmetrical with center tower
+    plats.push(
+      { x: arenaX + 100,          y: arenaY + aH - 140, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + aW - 300,     y: arenaY + aH - 140, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 120,   y: arenaY + aH - 280, w: 240, h: 14, isPlatform: true },
+      { x: arenaX + 250,          y: arenaY + aH - 400, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + aW - 410,     y: arenaY + aH - 400, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 100,   y: arenaY + aH - 540, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 80,    y: arenaY + aH - 700, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + 80,           y: arenaY + aH - 560, w: 140, h: 14, isPlatform: true },
+      { x: arenaX + aW - 220,     y: arenaY + aH - 560, w: 140, h: 14, isPlatform: true },
+    );
+  } else if (layout === 1) {
+    // Staircase — ascending left to right
+    plats.push(
+      { x: arenaX + 60,           y: arenaY + aH - 120, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 320,          y: arenaY + aH - 220, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 580,          y: arenaY + aH - 320, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 840,          y: arenaY + aH - 420, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 1100,         y: arenaY + aH - 520, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 1360,         y: arenaY + aH - 620, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 1620,         y: arenaY + aH - 720, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 1900,         y: arenaY + aH - 500, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + 2100,         y: arenaY + aH - 300, w: 180, h: 14, isPlatform: true },
+    );
+  } else if (layout === 2) {
+    // Scattered — random-looking but balanced
+    plats.push(
+      { x: arenaX + 150,          y: arenaY + aH - 180, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + 500,          y: arenaY + aH - 140, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + 900,          y: arenaY + aH - 200, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + 1350,         y: arenaY + aH - 160, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + 1800,         y: arenaY + aH - 180, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 2100,         y: arenaY + aH - 250, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + 300,          y: arenaY + aH - 380, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 700,          y: arenaY + aH - 420, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + 1100,         y: arenaY + aH - 460, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 1550,         y: arenaY + aH - 400, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + 2000,         y: arenaY + aH - 450, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 100,   y: arenaY + aH - 650, w: 200, h: 14, isPlatform: true },
+    );
+  } else if (layout === 3) {
+    // Twin towers — two vertical columns of platforms
+    plats.push(
+      { x: arenaX + 350,          y: arenaY + aH - 150, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 350,          y: arenaY + aH - 320, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 350,          y: arenaY + aH - 490, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + 350,          y: arenaY + aH - 660, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW - 530,     y: arenaY + aH - 150, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW - 530,     y: arenaY + aH - 320, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW - 530,     y: arenaY + aH - 490, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW - 530,     y: arenaY + aH - 660, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 120,   y: arenaY + aH - 400, w: 240, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 100,   y: arenaY + aH - 750, w: 200, h: 14, isPlatform: true },
+    );
+  } else {
+    // Diamond — platforms form a diamond shape
+    plats.push(
+      { x: arenaX + aW/2 - 100,   y: arenaY + aH - 140, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 350,   y: arenaY + aH - 300, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 + 170,   y: arenaY + aH - 300, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 500,   y: arenaY + aH - 460, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 + 320,   y: arenaY + aH - 460, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 350,   y: arenaY + aH - 620, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 + 170,   y: arenaY + aH - 620, w: 180, h: 14, isPlatform: true },
+      { x: arenaX + aW/2 - 100,   y: arenaY + aH - 780, w: 200, h: 14, isPlatform: true },
+      { x: arenaX + 60,           y: arenaY + aH - 200, w: 160, h: 14, isPlatform: true },
+      { x: arenaX + aW - 220,     y: arenaY + aH - 200, w: 160, h: 14, isPlatform: true },
+    );
+  }
+  return plats;
+}
+
 // Boss definitions for special endless rounds
 const ENDLESS_BOSS_ROUNDS = {
   10:  { name: 'EL CAPITAN',     color: '#ff8800', w: 100, h: 130, hp: 80,  speed: 1.5, dmg: 3, attacks: ['charge','slam'],       imgKey: 'boss' },
@@ -607,11 +684,14 @@ const ENDLESS_BOSS_ROUNDS = {
 
 // Round modifiers to add variety
 const ENDLESS_ROUND_MODIFIERS = [
-  { name: 'SWARM',      desc: 'Double enemies, half HP!',  chance: 0.15, minRound: 4 },
-  { name: 'ARMORED',    desc: 'Enemies have 2x HP!',       chance: 0.12, minRound: 5 },
-  { name: 'BLITZ',      desc: 'Enemies are faster!',       chance: 0.12, minRound: 3 },
-  { name: 'MARKSMAN',   desc: 'Enemies shoot more!',       chance: 0.10, minRound: 6 },
-  { name: 'DARKNESS',   desc: 'Limited visibility!',       chance: 0.08, minRound: 8 },
+  { name: 'SWARM',      desc: 'Double enemies, half HP!',   chance: 0.14, minRound: 4 },
+  { name: 'ARMORED',    desc: 'Enemies have 2x HP!',        chance: 0.11, minRound: 5 },
+  { name: 'BLITZ',      desc: 'Enemies are faster!',        chance: 0.11, minRound: 3 },
+  { name: 'MARKSMAN',   desc: 'Enemies shoot more!',        chance: 0.10, minRound: 6 },
+  { name: 'DARKNESS',   desc: 'Limited visibility!',        chance: 0.08, minRound: 8 },
+  { name: 'GIANTS',     desc: 'Enemies are 1.5x bigger!',   chance: 0.09, minRound: 7 },
+  { name: 'REGEN',      desc: 'Enemies slowly heal!',       chance: 0.08, minRound: 9 },
+  { name: 'GRAVITY',    desc: 'Low gravity!',               chance: 0.10, minRound: 4 },
 ];
 
 function endlessIsBossRound(round) {
@@ -626,6 +706,11 @@ function endlessNextRound() {
   endless.boss = null;
   endless.bossActive = false;
   endless.modifier = null;
+  endless.roofY = 0;
+  endless.roofTimer = 0;
+
+  // Regenerate platforms each round for variety
+  endless.platforms = endlessGeneratePlatforms(endless.arenaX, endless.arenaY, endless.arenaW, endless.arenaH, endless.round);
 
   // Recharge shield at start of each round
   if (endless.powerups.shield > 0) {
@@ -797,10 +882,13 @@ function endlessSpawnEnemy() {
   const side = Math.random() > 0.5 ? 1 : -1;
   const sx = side > 0 ? aX + aW - template.w - 10 : aX + 10;
 
+  // Giants modifier: scale up size
+  const sizeScale = (endless.modifier && endless.modifier.name === 'GIANTS') ? 1.5 : 1;
+
   const enemy = {
     x: sx,
-    y: floorY - template.h - 2,
-    w: template.w, h: template.h,
+    y: floorY - Math.floor(template.h * sizeScale) - 2,
+    w: Math.floor(template.w * sizeScale), h: Math.floor(template.h * sizeScale),
     hp: hp, maxHp: hp,
     speed: template.baseSpeed * spdScale,
     dir: side > 0 ? -1 : 1,
@@ -1939,9 +2027,9 @@ function applyEnemyData() {
       if (d.gameState === 'cutscene' && state !== 'cutscene') {
         cutscene.active = true;
       }
-      // Guest entering endless from shop — full heal
+      // Guest entering endless from shop — 20% heal
       if (d.gameState === 'endless' && oldState === 'endlessShop') {
-        player.hp = player.maxHp;
+        player.hp = Math.min(player.hp + Math.ceil(player.maxHp * 0.2), player.maxHp);
         player.iFrames = 60;
       }
       // Guest entering shop from endless — clear bullets
@@ -4190,9 +4278,10 @@ function throwProjectile() {
     vy = Math.sin(touchAim.angle) * pjSpd;
     p.facing = vx > 0 ? 1 : -1;
   } else if (mouseActive) {
-    // Aim toward mouse position (in screen coords, adjust for camera)
-    const px = p.x + p.w/2 - cameraX;
-    const py = p.y + p.h/3 - cameraY;
+    // Aim toward mouse position (in screen coords, adjust for camera + zoom)
+    const ez = ((state === 'endless' || state === 'endlessShop') && endless.endlessZoom < 0.99) ? endless.endlessZoom : 1;
+    const px = (p.x + p.w/2 - cameraX) * ez;
+    const py = (p.y + p.h/3 - cameraY) * ez;
     const dx = mouseX - px;
     const dy = mouseY - py;
     const dist = Math.sqrt(dx*dx + dy*dy) || 1;
@@ -4760,6 +4849,8 @@ function update() {
         // Execute dash!
         const dashDist = endless.powerups.dash >= 2 ? 180 : 120;
         p.x += dashDir * dashDist;
+        // Clamp to arena bounds so dash can't teleport through walls
+        p.x = Math.max(endless.arenaX + 5, Math.min(endless.arenaX + endless.arenaW - p.w - 5, p.x));
         p.iFrames = 20;
         endless.dashCooldown = endless.powerups.dash >= 2 ? 50 : 80;
         spawnParticles(p.x + p.w/2, p.y + p.h/2, '#88ffcc', 12);
@@ -4831,9 +4922,10 @@ function update() {
     p.climbingBigWall = false;
   }
 
-  // Gravity
+  // Gravity (halved in endless GRAVITY modifier)
   if (!p.climbingBigWall) {
-    p.vy += GRAVITY;
+    const gravMod = ((state === 'endless' || state === 'endlessShop') && endless.modifier && endless.modifier.name === 'GRAVITY') ? 0.5 : 1;
+    p.vy += GRAVITY * gravMod;
     if (p.onWall && p.vy > 1.5) p.vy = 1.5; // wall slide
   }
 
@@ -5411,7 +5503,7 @@ function update() {
     if (!proj) continue;
     proj.x += proj.vx;
     proj.y += proj.vy;
-    proj.vy += 0.04;
+    proj.vy += 0.07;
     proj.life--;
 
     // Hit guards
@@ -7100,11 +7192,39 @@ function update() {
   if (state === 'endless' || state === 'endlessShop') {
     endless.roundTimer++;
 
-    // Camera: center on arena
-    const camTargetX = endless.arenaX + endless.arenaW / 2 - W / 2;
-    const camTargetY = endless.arenaY + endless.arenaH / 2 - H / 2;
+    // Camera: center & zoom to fit arena
+    const zoomTarget = Math.min(W / (endless.arenaW + 80), H / (endless.arenaH + 80));
+    endless.endlessZoom += (zoomTarget - endless.endlessZoom) * 0.05;
+    const ez = endless.endlessZoom;
+    // Camera targets the center of the arena, accounting for zoom
+    const camTargetX = endless.arenaX + endless.arenaW / 2 - (W / ez) / 2;
+    const camTargetY = endless.arenaY + endless.arenaH / 2 - (H / ez) / 2;
     cameraX += (camTargetX - cameraX) * 0.08;
     cameraY += (camTargetY - cameraY) * 0.08;
+
+    // ── ANTI-CAMP ROOF ── if player stays near top of arena too long, roof descends
+    if (state === 'endless' && player.alive) {
+      const topZone = endless.arenaY + endless.arenaH * 0.2; // top 20% of arena
+      if (player.y < topZone) {
+        endless.roofTimer++;
+      } else {
+        endless.roofTimer = Math.max(0, endless.roofTimer - 3); // recovers 3x faster
+      }
+      // After 4 seconds (240 frames) of camping, roof starts descending
+      if (endless.roofTimer > 240) {
+        const roofSpeed = Math.min(3, (endless.roofTimer - 240) * 0.008);
+        endless.roofY = Math.min(endless.arenaH * 0.6, endless.roofY + roofSpeed);
+        // Push player down if they're above the roof
+        if (player.y < endless.arenaY + endless.roofY) {
+          player.y = endless.arenaY + endless.roofY;
+          player.vy = Math.max(player.vy, 2);
+          if (Math.random() < 0.3) spawnParticles(player.x + player.w/2, player.y, '#ff4444', 3);
+        }
+      } else {
+        // Roof retracts when not camping
+        endless.roofY = Math.max(0, endless.roofY - 1.5);
+      }
+    }
 
     // Regen powerup
     if (state === 'endless' && endless.powerups.regenBoost > 0 && player.alive) {
@@ -7303,9 +7423,15 @@ function update() {
         }
       }
 
-      // Simple gravity
-      e.vy += 0.5;
+      // Simple gravity (halved in GRAVITY modifier)
+      const grav = (endless.modifier && endless.modifier.name === 'GRAVITY') ? 0.25 : 0.5;
+      e.vy += grav;
       e.y += e.vy;
+
+      // REGEN modifier: enemies slowly heal
+      if (endless.modifier && endless.modifier.name === 'REGEN' && e.hp < e.maxHp) {
+        if (endless.roundTimer % 90 === 0) e.hp = Math.min(e.hp + 1, e.maxHp);
+      }
 
       // Floor collision
       if (e.y + e.h >= floorY) {
@@ -7457,8 +7583,8 @@ function update() {
       endless.bossActive = false;
       endless.modifier = null;
       endlessGenerateShop();
-      // Heal player between rounds — full heal
-      player.hp = player.maxHp;
+      // Heal player between rounds — 20% of max HP
+      player.hp = Math.min(player.hp + Math.ceil(player.maxHp * 0.2), player.maxHp);
       player.iFrames = 60;
       bullets = [];
       // Flash
@@ -7658,7 +7784,15 @@ function draw() {
   }
 
   ctx.save();
-  ctx.translate(-cameraX, -cameraY);
+  // Zoom out in endless mode to show the bigger arena
+  const isEndlessState = (state === 'endless' || state === 'endlessShop');
+  if (isEndlessState && endless.endlessZoom < 0.99) {
+    const ez = endless.endlessZoom;
+    ctx.scale(ez, ez);
+    ctx.translate(-cameraX, -cameraY);
+  } else {
+    ctx.translate(-cameraX, -cameraY);
+  }
 
   // Desert sand ground
   const groundGrad = ctx.createLinearGradient(0, GROUND_Y, 0, H);
@@ -8262,6 +8396,32 @@ function draw() {
       // Platform top
       ctx.fillStyle = '#88aaff33';
       ctx.fillRect(plat.x, plat.y, plat.w, 2);
+    }
+
+    // ── Anti-camp descending roof ──
+    if (endless.roofY > 2) {
+      const roofBottom = eaY + endless.roofY;
+      const roofGrad = ctx.createLinearGradient(eaX, eaY, eaX, roofBottom);
+      roofGrad.addColorStop(0, '#ff220088');
+      roofGrad.addColorStop(0.6, '#ff440044');
+      roofGrad.addColorStop(1, '#ff000000');
+      ctx.fillStyle = roofGrad;
+      ctx.fillRect(eaX, eaY, eaW, endless.roofY);
+      // Spiky bottom edge
+      ctx.fillStyle = '#ff2200aa';
+      for (let sx = eaX; sx < eaX + eaW; sx += 30) {
+        ctx.beginPath();
+        ctx.moveTo(sx, roofBottom);
+        ctx.lineTo(sx + 15, roofBottom + 12 + Math.sin(sx * 0.1 + Date.now() * 0.003) * 5);
+        ctx.lineTo(sx + 30, roofBottom);
+        ctx.fill();
+      }
+      // Warning text
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚠ STOP CAMPING! ⚠', eaX + eaW / 2, roofBottom + 40);
+      ctx.textAlign = 'left';
     }
 
     // Draw endless enemies
