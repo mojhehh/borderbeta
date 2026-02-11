@@ -516,6 +516,7 @@ function endlessIsBossRound(round) {
 }
 
 function endlessNextRound() {
+  state = 'endless';
   endless.round++;
   endless.roundTimer = 0;
   endless.intermission = false;
@@ -2850,8 +2851,9 @@ canvas.addEventListener('click', e => {
   if (state === 'menu') {
     if (menuState === 'main') {
       const menuY = H * 0.35;
+      const menuSpacing = Math.min(40, (H * 0.40) / 8);
       for (let i = 0; i < 9; i++) {
-        const y = menuY + i * 40;
+        const y = menuY + i * menuSpacing;
         if (cx > W/2 - 160 && cx < W/2 + 160 && cy > y - 18 && cy < y + 18) {
           menuSelection = i;
           if (i === 0) {
@@ -2986,8 +2988,9 @@ canvas.addEventListener('click', e => {
       // Multiplayer menu touch
       const mpItems = ['CREATE ROOM', 'JOIN ROOM', 'FRIENDS', 'BACK'];
       const mpY = H * 0.40;
+      const mpSpacing = Math.min(50, (H * 0.28) / (mpItems.length - 1));
       for (let i = 0; i < mpItems.length; i++) {
-        const y = mpY + i * 50;
+        const y = mpY + i * mpSpacing;
         if (cx > W/2 - 180 && cx < W/2 + 180 && cy > y - 24 && cy < y + 24) {
           if (i === 0) { if (!playerUsername) { menuState = 'account'; authInputField = 0; authError = ''; } else createRoom(); }
           else if (i === 1) { if (!playerUsername) { menuState = 'account'; authInputField = 0; authError = ''; } else { activateTextInput('roomcode'); joinRoomInput = ''; } }
@@ -3224,8 +3227,9 @@ canvas.addEventListener('touchstart', e => {
     if (state === 'menu') {
       if (menuState === 'main') {
         const menuY = H * 0.35;
+        const menuSpacing = Math.min(40, (H * 0.40) / 8);
         for (let i = 0; i < 9; i++) {
-          const y = menuY + i * 40;
+          const y = menuY + i * menuSpacing;
           if (cx > W/2 - 160 && cx < W/2 + 160 && cy > y - 18 && cy < y + 18) {
             menuSelection = i;
             if (i === 0) {
@@ -3346,8 +3350,9 @@ canvas.addEventListener('touchstart', e => {
       } else if (menuState === 'multiplayer') {
         const mpItems = ['CREATE ROOM', 'JOIN ROOM', 'FRIENDS', 'BACK'];
         const mpY = H * 0.40;
+        const mpSpacing = Math.min(50, (H * 0.28) / (mpItems.length - 1));
         for (let i = 0; i < mpItems.length; i++) {
-          const y = mpY + i * 50;
+          const y = mpY + i * mpSpacing;
           if (cx > W/2 - 180 && cx < W/2 + 180 && cy > y - 24 && cy < y + 24) {
             if (i === 0) { if (!playerUsername) { menuState = 'account'; authInputField = 0; authError = ''; } else createRoom(); }
             else if (i === 1) { if (!playerUsername) { menuState = 'account'; authInputField = 0; authError = ''; } else { activateTextInput('roomcode'); joinRoomInput = ''; } }
@@ -5332,7 +5337,7 @@ function update() {
           if (rectsOverlap(proj, ee)) {
             spawnParticles(ee.x + ee.w/2, ee.y + ee.h/3, ee.color || '#ff4444', 8);
             shakeTimer = ee.isBoss ? 6 : 4;
-            mpSendDamage('endlessEnemy', ei, 1);
+            mpSendDamage('endlessEnemy', ei, Math.ceil(proj.dmgMult || 1));
             hit = true; break;
           }
         }
@@ -13698,9 +13703,10 @@ function draw() {
       const optionNames = ['PLAY', 'ENDLESS', 'MULTIPLAYER', 'DIFFICULTY', 'SETTINGS', 'CONTROLS', 'FRIENDS', 'CREDITS', 'CHEATS'];
       const optionIcons = ['play', 'endless', 'controls', 'difficulty', 'settings', 'controls', 'credits', 'credits', 'settings'];
       const menuY = H * 0.35;
+      const menuSpacing = Math.min(40, (H * 0.40) / (optionNames.length - 1));
       for (let i = 0; i < optionNames.length; i++) {
         const selected = menuSelection === i;
-        const y = menuY + i * 40;
+        const y = menuY + i * menuSpacing;
         
         if (selected) {
           const selW = 280;
@@ -13724,25 +13730,30 @@ function draw() {
         ctx.shadowBlur = 0;
       }
       
+      // Bottom info — position relative to menu bottom so it never overlaps
+      const menuBot = menuY + (optionNames.length - 1) * menuSpacing + 30;
+      const infoStartY = Math.max(menuBot, H * 0.78);
+      const infoGap = Math.min(22, (H - infoStartY - 10) / 5);
+      
       // Logged in indicator
       if (playerUsername) {
         ctx.fillStyle = '#88ff88';
         ctx.font = '11px monospace';
-        ctx.fillText(`Logged in: ${playerUsername}`, W/2, H * 0.79);
+        ctx.fillText(`Logged in: ${playerUsername}`, W/2, infoStartY);
       }
       
       // Current difficulty badge
       ctx.fillStyle = '#666';
       ctx.font = '12px monospace';
-      ctx.fillText(`Difficulty: ${settings.difficulty.toUpperCase()}`, W/2, H * 0.84);
+      ctx.fillText(`Difficulty: ${settings.difficulty.toUpperCase()}`, W/2, infoStartY + infoGap);
       
       ctx.fillStyle = '#555';
       ctx.font = '11px monospace';
-      ctx.fillText(_isTouchDev ? 'Tap to select' : 'Click / Tap / Arrow Keys + ENTER', W/2, H * 0.89);
+      ctx.fillText(_isTouchDev ? 'Tap to select' : 'Click / Tap / Arrow Keys + ENTER', W/2, infoStartY + infoGap * 2);
       
       ctx.fillStyle = '#333';
       ctx.font = '10px monospace';
-      ctx.fillText('v3.0', W/2, H * 0.94);
+      ctx.fillText('v3.0', W/2, infoStartY + infoGap * 3);
 
       // ── CAMPAIGN MODE COMING SOON TEASER ──
       const campaignPulse = 0.7 + Math.sin(Date.now() / 800) * 0.3;
@@ -13751,7 +13762,7 @@ function draw() {
       ctx.font = 'bold 13px monospace';
       ctx.shadowColor = '#ff880088';
       ctx.shadowBlur = 10;
-      ctx.fillText('CAMPAIGN MODE — COMING SOON', W / 2, H * 0.97);
+      ctx.fillText('CAMPAIGN MODE — COMING SOON', W / 2, infoStartY + infoGap * 4);
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
       
@@ -13764,9 +13775,10 @@ function draw() {
       const mpItems = ['CREATE ROOM', 'JOIN ROOM', 'FRIENDS', 'BACK'];
       const mpColors = ['#88ff88', '#ffcc44', '#88ccff', '#ff8844'];
       const mpY = H * 0.40;
+      const mpSpacing = Math.min(50, (H * 0.28) / (mpItems.length - 1));
       for (let i = 0; i < mpItems.length; i++) {
         const selected = mpMenuSelection === i;
-        const y = mpY + i * 50;
+        const y = mpY + i * mpSpacing;
         
         if (selected) {
           ctx.fillStyle = mpColors[i] + '22';
@@ -13810,19 +13822,21 @@ function draw() {
       if (!playerUsername) {
         ctx.fillStyle = '#ff8844';
         ctx.font = '14px monospace';
-        ctx.fillText('You need an account to play multiplayer', W/2, H * 0.78);
+        const notLogY = Math.max(mpY + (mpItems.length - 1) * mpSpacing + 50, H * 0.72);
+        ctx.fillText('You need an account to play multiplayer', W/2, notLogY);
         ctx.fillStyle = '#ffcc44';
         ctx.font = 'bold 14px monospace';
-        ctx.fillText('[ Click here to Login / Register ]', W/2, H * 0.83);
+        ctx.fillText('[ Click here to Login / Register ]', W/2, notLogY + 24);
       } else {
         // Show logged-in status + logout option
+        const logY = Math.max(mpY + (mpItems.length - 1) * mpSpacing + 50, H * 0.72);
         ctx.fillStyle = '#88ff88';
         ctx.font = '12px monospace';
-        ctx.fillText('Logged in as: ' + playerUsername, W/2, H * 0.72);
+        ctx.fillText('Logged in as: ' + playerUsername, W/2, logY);
         const logoutSel = mpMenuSelection === 4;
         ctx.fillStyle = logoutSel ? '#ff6666' : '#aa6666';
         ctx.font = (logoutSel ? 'bold ' : '') + '13px monospace';
-        ctx.fillText('[ LOGOUT ]', W/2, H * 0.77);
+        ctx.fillText('[ LOGOUT ]', W/2, logY + 22);
       }
       
       if (authError) {
