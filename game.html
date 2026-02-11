@@ -7,9 +7,20 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Cruza La Frontera - Cross the Border!</title>
+<title>Cruza La Frontera - BETA</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+#betaBanner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+  background: #ff880022; border-bottom: 2px solid #ff8800;
+  color: #ffcc44; font: bold 13px monospace; text-align: center;
+  padding: 6px 10px; pointer-events: none;
+  animation: betaFade 8s forwards;
+}
+@keyframes betaFade {
+  0%, 60% { opacity: 1; }
+  100% { opacity: 0; display: none; }
+}
 html, body {
   background: #000;
   width: 100%;
@@ -34,6 +45,7 @@ canvas {
 </style>
 </head>
 <body>
+<div id="betaBanner">BETA VERSION — some stuff might be broken</div>
 <div id="ui">
   <h1>CRUZA LA FRONTERA</h1>
   <p>Arrow Keys / WASD to move &amp; jump · Dodge la migra · Climb the border wall!</p>
@@ -632,6 +644,11 @@ function _declinePerfMode() {
   _perfPromptShown = true;
   localStorage.setItem('perfPromptDismissed', 'true');
 }
+
+// ── BETA VERSION POPUP ──
+let _showBetaPopup = true;
+window._betaOkBtn = null;
+function _dismissBetaPopup() { _showBetaPopup = false; }
 
 // ── TOUCH CONTROL LAYOUT SYSTEM ──
 const TOUCH_PRESETS = {
@@ -2560,6 +2577,13 @@ document.addEventListener('webkitfullscreenchange', () => { setTimeout(resizeCan
 canvas.addEventListener('click', e => {
   const { x: cx, y: cy } = clientToCanvas(e.clientX, e.clientY);
   
+  // Beta popup (highest priority)
+  if (_showBetaPopup && window._betaOkBtn) {
+    const ob = window._betaOkBtn;
+    if (cx >= ob.x && cx <= ob.x + ob.w && cy >= ob.y && cy <= ob.y + ob.h) { _dismissBetaPopup(); return; }
+    return;
+  }
+
   // Performance mode prompt buttons (highest priority when visible)
   if (_showPerfPrompt && window._perfYesBtn && window._perfNoBtn) {
     const yb = window._perfYesBtn, nb = window._perfNoBtn;
@@ -2922,6 +2946,13 @@ canvas.addEventListener('touchstart', e => {
   mouseActive = false;
   for (const t of e.changedTouches) {
     const { x: cx, y: cy } = clientToCanvas(t.clientX, t.clientY);
+
+    // Beta popup (highest priority)
+    if (_showBetaPopup && window._betaOkBtn) {
+      const ob = window._betaOkBtn;
+      if (cx >= ob.x && cx <= ob.x + ob.w && cy >= ob.y && cy <= ob.y + ob.h) { _dismissBetaPopup(); return; }
+      return;
+    }
 
     // Performance mode prompt buttons (highest priority when visible)
     if (_showPerfPrompt && window._perfYesBtn && window._perfNoBtn) {
@@ -14574,6 +14605,52 @@ function draw() {
     // Store button rects for click handling
     window._perfYesBtn = { x: yBtnX, y: yBtnY, w: btnW, h: btnH };
     window._perfNoBtn = { x: nBtnX, y: yBtnY, w: btnW, h: btnH };
+    ctx.restore();
+  }
+
+  // ── BETA VERSION POPUP ──
+  if (_showBetaPopup) {
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+    const boxW = Math.min(460, W - 40);
+    const boxH = 200;
+    const bx = W/2 - boxW/2, by = H/2 - boxH/2;
+    // Box
+    ctx.fillStyle = '#1a1a2e';
+    ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 16); ctx.fill();
+    ctx.strokeStyle = '#ff8800';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 16); ctx.stroke();
+    // Warning triangle
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath();
+    ctx.moveTo(W/2, by + 22); ctx.lineTo(W/2 - 14, by + 48); ctx.lineTo(W/2 + 14, by + 48);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#1a1a2e';
+    ctx.font = 'bold 16px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('!', W/2, by + 44);
+    // Title
+    ctx.fillStyle = '#ff8800';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText('BETA VERSION', W/2, by + 75);
+    // Message
+    ctx.fillStyle = '#ccc';
+    ctx.font = '14px monospace';
+    ctx.fillText('This is the beta version.', W/2, by + 102);
+    ctx.fillText('Some stuff might be broken!', W/2, by + 122);
+    // OK button
+    const okBtnW = 120, okBtnH = 38;
+    const okBtnX = W/2 - okBtnW/2, okBtnY = by + boxH - 55;
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath(); ctx.roundRect(okBtnX, okBtnY, okBtnW, okBtnH, 8); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('GOT IT', W/2, okBtnY + 25);
+    window._betaOkBtn = { x: okBtnX, y: okBtnY, w: okBtnW, h: okBtnH };
     ctx.restore();
   }
 }
