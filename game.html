@@ -149,7 +149,7 @@ const JUMP_FORCE = -12.5;
 const WALL_CLIMB_SPEED = 3.8;
 
 // ── Game State ──
-let state = 'menu'; // menu | tutorial | intro | playing | cutscene | bossfight | bossdialogue | phonecall | epsteinfight | fusioncutscene | fusionfight | splitfight | hawkingRefusal | hawkingDeath | winCutscene | won | dead | arena | lobby
+let state = 'menu'; // menu | tutorial | intro | playing | cutscene | bossfight | bossdialogue | phonecall | epsteinfight | fusioncutscene | fusionfight | splitfight | hawkingRefusal | hawkingDeath | winCutscene | won | dead | arena | lobby | endless | endlessShop
 let cameraX = 0;
 let cameraY = 0;
 let levelWidth = 4000;
@@ -194,6 +194,385 @@ let winCutsceneOfficeX = 0; // world X position of the citizenship office
 let introTimer = 0;
 let introPhase = 0; // 0=black, 1=title drop, 2=subtitle, 3=camera sweep, 4=zoom to player, 5=GO!
 let introParticles = [];
+
+// ════════════════════════════════════════════════════════════════
+// ENDLESS MODE — CoD Zombies style wave survival
+// ════════════════════════════════════════════════════════════════
+let endless = {
+  round: 0,
+  enemies: [],        // active enemies [{x,y,w,h,hp,maxHp,speed,dir,type,imgKey,color,frame,frameTimer,vy,dead,shootCooldown,attackTimer}]
+  spawnsLeft: 0,      // enemies remaining to spawn this round
+  spawnTimer: 0,      // cooldown between spawns
+  totalKills: 0,
+  roundTimer: 0,      // frames since round started
+  intermission: false,// between rounds (shop open)
+  intermissionTimer: 0,
+  arenaW: 1600,
+  arenaH: 700,
+  arenaX: 0,
+  arenaY: 0,
+  platforms: [],
+  // Power-ups the player has collected
+  powerups: {
+    dmgBoost: 0,      // +25% dmg per level (max 5)
+    speedBoost: 0,    // +15% speed per level (max 5)
+    maxHpBoost: 0,    // +5 HP per level (max 5)
+    regenBoost: 0,    // regen 1 HP every X seconds (max 3): 10s, 7s, 4s
+    projSpeed: 0,     // +20% proj speed per level (max 5)
+    multiShot: 0,     // shoot extra projectiles (max 3): 1, 2, 3 extra
+    cooldownReduce: 0,// -20% cooldown per level (max 4)
+    vampirism: 0,     // heal on kill (max 3): 1hp, 2hp, 3hp per kill
+  },
+  shopChoices: [],     // 3 power-up options for current round
+  shopSelection: 0,
+  highScore: parseInt(localStorage.getItem('endlessHighScore') || '0'),
+};
+
+const ENDLESS_POWERUP_DEFS = {
+  dmgBoost:      { name: 'DAMAGE UP',     icon: 'sword',  desc: '+25% throwable damage',   max: 5, color: '#ff4444' },
+  speedBoost:    { name: 'SPEED UP',       icon: 'wind',   desc: '+15% movement speed',     max: 5, color: '#44aaff' },
+  maxHpBoost:    { name: 'TOUGHNESS',      icon: 'heart',  desc: '+5 max HP (heals too)',    max: 5, color: '#ff88aa' },
+  regenBoost:    { name: 'REGENERATION',   icon: 'cross',  desc: 'Regen HP over time',       max: 3, color: '#44ff88' },
+  projSpeed:     { name: 'ARM STRENGTH',   icon: 'arm',    desc: '+20% throw speed',         max: 5, color: '#ffaa44' },
+  multiShot:     { name: 'MULTI-THROW',    icon: 'target', desc: '+1 extra projectile',      max: 3, color: '#ff44ff' },
+  cooldownReduce:{ name: 'QUICK HANDS',    icon: 'bolt',   desc: '-20% throw cooldown',      max: 4, color: '#ffff44' },
+  vampirism:     { name: 'VAMPIRISM',      icon: 'fangs',  desc: 'Heal on enemy kill',       max: 3, color: '#aa44ff' },
+};
+
+// Canvas-drawn icons for endless mode powerups (no emojis)
+function drawEndlessIcon(ctx, type, cx, cy, size, color) {
+  ctx.save();
+  ctx.fillStyle = color || '#fff';
+  ctx.strokeStyle = color || '#fff';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const s = size / 2;
+  switch(type) {
+    case 'sword': { // crossed swords
+      ctx.lineWidth = Math.max(2, size / 10);
+      ctx.beginPath();
+      ctx.moveTo(cx - s*0.7, cy + s*0.7); ctx.lineTo(cx + s*0.7, cy - s*0.7);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx + s*0.7, cy + s*0.7); ctx.lineTo(cx - s*0.7, cy - s*0.7);
+      ctx.stroke();
+      // Crossguards
+      ctx.lineWidth = Math.max(1.5, size / 14);
+      ctx.beginPath();
+      ctx.moveTo(cx - s*0.35, cy - s*0.15); ctx.lineTo(cx + s*0.05, cy + s*0.25);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - s*0.05, cy - s*0.25); ctx.lineTo(cx + s*0.35, cy + s*0.15);
+      ctx.stroke();
+      break;
+    }
+    case 'wind': { // speed lines with arrows
+      ctx.lineWidth = Math.max(2, size / 12);
+      for (let i = 0; i < 3; i++) {
+        const yOff = (i - 1) * s * 0.55;
+        const xOff = i === 1 ? 0 : s * 0.15;
+        ctx.beginPath();
+        ctx.moveTo(cx - s*0.7 + xOff, cy + yOff);
+        ctx.lineTo(cx + s*0.5, cy + yOff);
+        ctx.stroke();
+        // Arrow tip
+        ctx.beginPath();
+        ctx.moveTo(cx + s*0.5, cy + yOff);
+        ctx.lineTo(cx + s*0.25, cy + yOff - s*0.2);
+        ctx.moveTo(cx + s*0.5, cy + yOff);
+        ctx.lineTo(cx + s*0.25, cy + yOff + s*0.2);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'heart': { // heart shape
+      ctx.beginPath();
+      const hy = cy - s * 0.05;
+      ctx.moveTo(cx, hy + s * 0.75);
+      ctx.bezierCurveTo(cx - s*1.0, hy + s*0.15, cx - s*0.9, hy - s*0.65, cx, hy - s*0.2);
+      ctx.bezierCurveTo(cx + s*0.9, hy - s*0.65, cx + s*1.0, hy + s*0.15, cx, hy + s*0.75);
+      ctx.fill();
+      break;
+    }
+    case 'cross': { // medical cross
+      const cw = s * 0.3;
+      ctx.fillRect(cx - cw, cy - s*0.7, cw*2, s*1.4);
+      ctx.fillRect(cx - s*0.7, cy - cw, s*1.4, cw*2);
+      break;
+    }
+    case 'arm': { // flexed arm
+      ctx.lineWidth = Math.max(2.5, size / 8);
+      ctx.beginPath();
+      ctx.moveTo(cx - s*0.5, cy + s*0.6);
+      ctx.quadraticCurveTo(cx - s*0.6, cy, cx - s*0.15, cy - s*0.1);
+      ctx.quadraticCurveTo(cx + s*0.3, cy - s*0.8, cx + s*0.15, cy + s*0.1);
+      ctx.lineTo(cx + s*0.55, cy - s*0.45);
+      ctx.stroke();
+      // Fist
+      ctx.beginPath();
+      ctx.arc(cx + s*0.55, cy - s*0.5, s*0.18, 0, Math.PI*2);
+      ctx.fill();
+      break;
+    }
+    case 'target': { // bullseye
+      ctx.lineWidth = Math.max(1.5, size / 14);
+      ctx.beginPath(); ctx.arc(cx, cy, s*0.8, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, s*0.5, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, s*0.2, 0, Math.PI*2); ctx.fill();
+      // Crosshairs
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - s*0.9); ctx.lineTo(cx, cy + s*0.9);
+      ctx.moveTo(cx - s*0.9, cy); ctx.lineTo(cx + s*0.9, cy);
+      ctx.stroke();
+      break;
+    }
+    case 'bolt': { // lightning bolt
+      ctx.beginPath();
+      ctx.moveTo(cx + s*0.15, cy - s*0.85);
+      ctx.lineTo(cx - s*0.35, cy + s*0.05);
+      ctx.lineTo(cx + s*0.08, cy + s*0.05);
+      ctx.lineTo(cx - s*0.15, cy + s*0.85);
+      ctx.lineTo(cx + s*0.35, cy - s*0.05);
+      ctx.lineTo(cx - s*0.08, cy - s*0.05);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'fangs': { // vampire fangs
+      ctx.beginPath();
+      // Left fang
+      ctx.moveTo(cx - s*0.45, cy - s*0.25);
+      ctx.lineTo(cx - s*0.28, cy + s*0.65);
+      ctx.lineTo(cx - s*0.1, cy - s*0.25);
+      ctx.fill();
+      // Right fang
+      ctx.beginPath();
+      ctx.moveTo(cx + s*0.1, cy - s*0.25);
+      ctx.lineTo(cx + s*0.28, cy + s*0.65);
+      ctx.lineTo(cx + s*0.45, cy - s*0.25);
+      ctx.fill();
+      // Mouth arc
+      ctx.beginPath();
+      ctx.arc(cx, cy - s*0.1, s*0.6, 0, Math.PI, false);
+      ctx.lineWidth = Math.max(1.5, size / 14);
+      ctx.stroke();
+      break;
+    }
+    case 'star': { // 5-point star
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? s*0.85 : s*0.38;
+        const angle = (i * Math.PI / 5) - Math.PI / 2;
+        const px = cx + Math.cos(angle) * r;
+        const py = cy + Math.sin(angle) * r;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+  }
+  ctx.restore();
+}
+
+// Enemy types for endless by difficulty tier
+const ENDLESS_ENEMY_TIERS = [
+  // Tier 0 (rounds 1-3): weak guards
+  { type: 'guard',   imgKey: 'guard',   color: '#888',    w: 48, h: 72,  baseHp: 2, baseSpeed: 1.0, shootCd: 120, dmg: 1 },
+  // Tier 1 (rounds 3-6): faster guards
+  { type: 'guard2',  imgKey: 'guard',   color: '#aa6622', w: 48, h: 72,  baseHp: 3, baseSpeed: 1.4, shootCd: 90,  dmg: 1 },
+  // Tier 2 (rounds 5-8): Clinton-like
+  { type: 'clinton', imgKey: 'clinton', color: '#cc2222', w: 60, h: 80,  baseHp: 6, baseSpeed: 1.8, shootCd: 70,  dmg: 2 },
+  // Tier 3 (rounds 7-10): Musk-like
+  { type: 'musk',    imgKey: 'musk',    color: '#4488ff', w: 60, h: 80,  baseHp: 8, baseSpeed: 2.2, shootCd: 60,  dmg: 2 },
+  // Tier 4 (rounds 9-12): Epstein-like
+  { type: 'epstein', imgKey: 'epstein', color: '#8844ff', w: 70, h: 100, baseHp: 12, baseSpeed: 1.8, shootCd: 50, dmg: 3 },
+  // Tier 5 (rounds 11-14): Trump-like
+  { type: 'trump',   imgKey: 'boss',    color: '#ff4400', w: 80, h: 110, baseHp: 16, baseSpeed: 1.5, shootCd: 45, dmg: 3 },
+  // Tier 6 (rounds 13+): Hawking — the ultimate
+  { type: 'hawking', imgKey: 'hawking', color: '#44ff88', w: 80, h: 110, baseHp: 25, baseSpeed: 1.2, shootCd: 40, dmg: 4 },
+];
+
+function startEndless() {
+  state = 'endless';
+  endless.round = 0;
+  endless.enemies = [];
+  endless.totalKills = 0;
+  endless.roundTimer = 0;
+  endless.intermission = false;
+  endless.intermissionTimer = 0;
+  endless.shopChoices = [];
+  endless.shopSelection = 0;
+  // Reset power-ups
+  for (const k in endless.powerups) endless.powerups[k] = 0;
+
+  // Set up arena
+  const aW = endless.arenaW;
+  const aH = endless.arenaH;
+  endless.arenaX = 200;
+  endless.arenaY = GROUND_Y - aH;
+  endless.platforms = [
+    // Floor
+    { x: endless.arenaX, y: endless.arenaY + aH, w: aW, h: 30, isFloor: true },
+    // Walls
+    { x: endless.arenaX - 30, y: endless.arenaY, w: 30, h: aH + 30, isSideWall: true },
+    { x: endless.arenaX + aW, y: endless.arenaY, w: 30, h: aH + 30, isSideWall: true },
+    // Platforms (isPlatform: true so player can jump through from below)
+    { x: endless.arenaX + 100, y: endless.arenaY + aH - 160, w: 160, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW/2 - 100, y: endless.arenaY + aH - 280, w: 200, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW - 260, y: endless.arenaY + aH - 160, w: 160, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW/2 - 80, y: endless.arenaY + aH - 440, w: 160, h: 14, isPlatform: true },
+    { x: endless.arenaX + 250, y: endless.arenaY + aH - 360, w: 120, h: 14, isPlatform: true },
+    { x: endless.arenaX + aW - 370, y: endless.arenaY + aH - 360, w: 120, h: 14, isPlatform: true },
+  ];
+
+  // Reset player
+  const dm = getDiffMult();
+  player.x = endless.arenaX + aW / 2 - player.w / 2;
+  player.y = endless.arenaY + aH - player.h - 10;
+  player.hp = dm.playerHp;
+  player.maxHp = dm.playerHp;
+  player.alive = true;
+  player.won = false;
+  player.vx = 0;
+  player.vy = 0;
+  player.onGround = true;
+  player.facing = 1;
+  player.iFrames = 60;
+  particles = [];
+  projectiles = [];
+  bullets = [];
+  bossMinions = [];
+  bossVfx = [];
+  epsteinProjectiles = [];
+  // Clear story mode entities
+  bigWall = null;
+  boss = null;
+  epstein = null;
+  fusionBoss = null;
+  guards = [];
+  miniBosses = [];
+
+  cameraX = endless.arenaX + aW / 2 - W / 2;
+  cameraY = 0;
+  levelWidth = endless.arenaX + aW + 200;
+  gameTimer = 0;
+
+  // Start round 1
+  endlessNextRound();
+}
+
+function endlessNextRound() {
+  endless.round++;
+  endless.roundTimer = 0;
+  endless.intermission = false;
+
+  // Scale: more enemies & tougher each round
+  const r = endless.round;
+  const baseCount = 3 + Math.floor(r * 1.5);
+  endless.spawnsLeft = Math.min(baseCount, 25); // cap at 25 per round
+  endless.spawnTimer = 30; // first spawn soon
+
+  // Clear leftover projectiles
+  bullets = [];
+  epsteinProjectiles = [];
+}
+
+function endlessGenerateShop() {
+  const pu = endless.powerups;
+  // Get all available powerups (not maxed)
+  const available = Object.keys(ENDLESS_POWERUP_DEFS).filter(k => pu[k] < ENDLESS_POWERUP_DEFS[k].max);
+
+  // If all powerups are maxed, skip shop entirely
+  if (available.length === 0) {
+    endlessNextRound();
+    return;
+  }
+
+  // Pick 3 unique choices (or fewer if not enough available)
+  const choices = [];
+  const pool = [...available];
+  // Shuffle
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  for (let i = 0; i < 3 && i < pool.length; i++) choices.push(pool[i]);
+
+  endless.shopChoices = choices;
+  endless.shopSelection = 0;
+}
+
+function endlessApplyPowerup(key) {
+  const pu = endless.powerups;
+  const def = ENDLESS_POWERUP_DEFS[key];
+  if (pu[key] >= def.max) return;
+  pu[key]++;
+
+  // Apply immediate effects
+  if (key === 'maxHpBoost') {
+    player.maxHp += 5;
+    player.hp = Math.min(player.hp + 5, player.maxHp);
+  }
+}
+
+function endlessGetEnemyForRound(round) {
+  // Determine which tier of enemies to spawn
+  // Earlier rounds: weaker enemies. Later: stronger + mixed.
+  const tierWeights = [];
+  for (let t = 0; t < ENDLESS_ENEMY_TIERS.length; t++) {
+    const tier = ENDLESS_ENEMY_TIERS[t];
+    // Each tier unlocks at roughly tier*2 + 1 rounds
+    const unlockRound = t * 2 + 1;
+    if (round >= unlockRound) {
+      // Weight: newer tiers get heavier weight as rounds increase
+      const w = Math.max(1, round - unlockRound + 1);
+      tierWeights.push({ tier: t, weight: w });
+    }
+  }
+  // Weighted random pick
+  const totalW = tierWeights.reduce((s, tw) => s + tw.weight, 0);
+  let roll = Math.random() * totalW;
+  let pickedTier = 0;
+  for (const tw of tierWeights) {
+    roll -= tw.weight;
+    if (roll <= 0) { pickedTier = tw.tier; break; }
+  }
+  return ENDLESS_ENEMY_TIERS[pickedTier];
+}
+
+function endlessSpawnEnemy() {
+  const r = endless.round;
+  const template = endlessGetEnemyForRound(r);
+  const aX = endless.arenaX, aW = endless.arenaW, aH = endless.arenaH;
+  const floorY = endless.arenaY + aH;
+
+  // HP scales with round: base * (1 + round*0.15)
+  const hpScale = 1 + r * 0.15;
+  const spdScale = 1 + r * 0.03; // slight speedup
+  const hp = Math.ceil(template.baseHp * hpScale);
+
+  // Spawn from left or right edge
+  const side = Math.random() > 0.5 ? 1 : -1;
+  const sx = side > 0 ? aX + aW - template.w - 10 : aX + 10;
+
+  endless.enemies.push({
+    x: sx,
+    y: floorY - template.h - 2,
+    w: template.w, h: template.h,
+    hp: hp, maxHp: hp,
+    speed: template.baseSpeed * spdScale,
+    dir: side > 0 ? -1 : 1,
+    type: template.type,
+    imgKey: template.imgKey,
+    color: template.color,
+    frame: 0, frameTimer: 0,
+    vy: 0,
+    dead: false,
+    shootCooldown: template.shootCd + Math.floor(Math.random() * 30),
+    attackTimer: 0,
+    dmg: template.dmg,
+    iFrames: 0,
+  });
+}
 
 // Title screen / settings
 let menuState = 'main'; // main | settings | difficulty | controls | cheats | credits | account | multiplayer | lobby | friends
@@ -434,6 +813,13 @@ function handlePlayerDeath() {
     }
   } else {
     state = 'dead';
+    // Endless mode: save high score on death
+    if (endless.round > 0) {
+      if (endless.round > endless.highScore) {
+        endless.highScore = endless.round;
+        localStorage.setItem('endlessHighScore', String(endless.highScore));
+      }
+    }
   }
 }
 
@@ -1853,20 +2239,21 @@ window.addEventListener('keydown', e => {
   if (state === 'menu') {
     if (activeTextInput) return; // block menu nav while typing
     if (menuState === 'main') {
-      if (e.code === 'ArrowUp' || e.code === 'KeyW') { menuSelection--; if (menuSelection < 0) menuSelection = 7; }
-      if (e.code === 'ArrowDown' || e.code === 'KeyS') { menuSelection++; if (menuSelection > 7) menuSelection = 0; }
+      if (e.code === 'ArrowUp' || e.code === 'KeyW') { menuSelection--; if (menuSelection < 0) menuSelection = 8; }
+      if (e.code === 'ArrowDown' || e.code === 'KeyS') { menuSelection++; if (menuSelection > 8) menuSelection = 0; }
       if (e.code === 'Space' || e.code === 'Enter') {
         if (menuSelection === 0) {
           if (tutorialDone) { startGame(); }
           else { state = 'tutorial'; tutorialPage = 0; }
         }
-        else if (menuSelection === 1) { menuState = 'multiplayer'; mpMenuSelection = 0; authError = ''; }
-        else if (menuSelection === 2) { menuState = 'difficulty'; menuSelection = 0; }
-        else if (menuSelection === 3) { menuState = 'settings'; menuSelection = 0; }
-        else if (menuSelection === 4) { menuState = 'controls'; menuSelection = 0; }
-        else if (menuSelection === 5) { friendsBackTo = 'main'; menuState = 'friends'; friendMenuSelection = 0; authError = ''; loadFriendsList(); }
-        else if (menuSelection === 6) { menuState = 'credits'; menuSelection = 0; }
-        else if (menuSelection === 7) { menuState = 'cheats'; cheatSelection = 0; }
+        else if (menuSelection === 1) { startEndless(); }
+        else if (menuSelection === 2) { menuState = 'multiplayer'; mpMenuSelection = 0; authError = ''; }
+        else if (menuSelection === 3) { menuState = 'difficulty'; menuSelection = 0; }
+        else if (menuSelection === 4) { menuState = 'settings'; menuSelection = 0; }
+        else if (menuSelection === 5) { menuState = 'controls'; menuSelection = 0; }
+        else if (menuSelection === 6) { friendsBackTo = 'main'; menuState = 'friends'; friendMenuSelection = 0; authError = ''; loadFriendsList(); }
+        else if (menuSelection === 7) { menuState = 'credits'; menuSelection = 0; }
+        else if (menuSelection === 8) { menuState = 'cheats'; cheatSelection = 0; }
       }
     } else if (menuState === 'cheats') {
       const cheatKeys = Object.keys(cheats);
@@ -2052,6 +2439,30 @@ window.addEventListener('keydown', e => {
     else { bossDialogue.index = bossDialogue.texts.length; advanceCutscene(); }
     return;
   }
+  // ── ENDLESS MODE INPUT ──
+  if (e.code === 'Escape' && (state === 'endless' || state === 'endlessShop')) {
+    // Save high score and return to menu
+    if (endless.round > endless.highScore) {
+      endless.highScore = endless.round;
+      localStorage.setItem('endlessHighScore', String(endless.highScore));
+    }
+    state = 'menu'; menuState = 'main'; menuSelection = 1;
+    return;
+  }
+  if (state === 'endlessShop' && endless.shopChoices.length > 0) {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+      endless.shopSelection = (endless.shopSelection - 1 + endless.shopChoices.length) % endless.shopChoices.length;
+    }
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+      endless.shopSelection = (endless.shopSelection + 1) % endless.shopChoices.length;
+    }
+    if (e.code === 'Space' || e.code === 'Enter') {
+      const key = endless.shopChoices[endless.shopSelection];
+      endlessApplyPowerup(key);
+      endlessNextRound();
+    }
+    return;
+  }
   
   // Spectator controls — cycle through alive players
   if (mpSpectating) {
@@ -2090,7 +2501,7 @@ window.addEventListener('keydown', e => {
           }
         } else {
           // Solo retry
-          startGame();
+          if (endless.round > 0) { startEndless(); } else { startGame(); }
         }
       } else {
         // Leave
@@ -2102,7 +2513,7 @@ window.addEventListener('keydown', e => {
   if ((e.code === 'Space' || e.code === 'Enter') && state === 'intro' && introPhase >= 3) {
     introPhase = 6;
   }
-  if ((e.code === 'KeyF' || e.code === 'KeyE') && (state === 'playing' || state === 'bossfight' || state === 'epsteinfight' || state === 'fusionfight' || state === 'splitfight') && player.alive) {
+  if ((e.code === 'KeyF' || e.code === 'KeyE') && (state === 'playing' || state === 'bossfight' || state === 'epsteinfight' || state === 'fusionfight' || state === 'splitfight' || state === 'endless') && player.alive) {
     throwProjectile();
   }
 });
@@ -2167,7 +2578,7 @@ canvas.addEventListener('click', e => {
   if (state === 'menu') {
     if (menuState === 'main') {
       const menuY = H * 0.35;
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 9; i++) {
         const y = menuY + i * 40;
         if (cx > W/2 - 160 && cx < W/2 + 160 && cy > y - 18 && cy < y + 18) {
           menuSelection = i;
@@ -2175,13 +2586,14 @@ canvas.addEventListener('click', e => {
             if (tutorialDone) { startGame(); }
             else { state = 'tutorial'; tutorialPage = 0; }
           }
-          else if (i === 1) { menuState = 'multiplayer'; mpMenuSelection = 0; authError = ''; }
-          else if (i === 2) { menuState = 'difficulty'; menuSelection = 0; }
-          else if (i === 3) { menuState = 'settings'; menuSelection = 0; }
-          else if (i === 4) { menuState = 'controls'; menuSelection = 0; }
-          else if (i === 5) { friendsBackTo = 'main'; menuState = 'friends'; friendMenuSelection = 0; authError = ''; loadFriendsList(); }
-          else if (i === 6) { menuState = 'credits'; menuSelection = 0; }
-          else if (i === 7) { menuState = 'cheats'; cheatSelection = 0; }
+          else if (i === 1) { startEndless(); }
+          else if (i === 2) { menuState = 'multiplayer'; mpMenuSelection = 0; authError = ''; }
+          else if (i === 3) { menuState = 'difficulty'; menuSelection = 0; }
+          else if (i === 4) { menuState = 'settings'; menuSelection = 0; }
+          else if (i === 5) { menuState = 'controls'; menuSelection = 0; }
+          else if (i === 6) { friendsBackTo = 'main'; menuState = 'friends'; friendMenuSelection = 0; authError = ''; loadFriendsList(); }
+          else if (i === 7) { menuState = 'credits'; menuSelection = 0; }
+          else if (i === 8) { menuState = 'cheats'; cheatSelection = 0; }
           return;
         }
       }
@@ -2422,7 +2834,27 @@ canvas.addEventListener('click', e => {
   if (state === 'cutscene' || state === 'bossdialogue') {
     if (mpEnabled && !isHost) { mpSendCutsceneEvent('advance'); } else { advanceCutscene(); } return;
   }
-  if ((state === 'playing' || state === 'bossfight' || state === 'epsteinfight' || state === 'fusionfight' || state === 'splitfight') && player.alive) throwProjectile();
+  // ── ENDLESS SHOP CLICK ──
+  if (state === 'endlessShop' && endless.shopChoices.length > 0) {
+    const cardW = Math.min(220, (W - 60) / 3);
+    const cardH = 240;
+    const cardGap = 16;
+    const totalW2 = cardW * endless.shopChoices.length + cardGap * (endless.shopChoices.length - 1);
+    const startX2 = W / 2 - totalW2 / 2;
+    const cardY2 = H * 0.3;
+    for (let ci = 0; ci < endless.shopChoices.length; ci++) {
+      const cxCard = startX2 + ci * (cardW + cardGap);
+      if (cx > cxCard && cx < cxCard + cardW && cy > cardY2 && cy < cardY2 + cardH) {
+        endless.shopSelection = ci;
+        const key = endless.shopChoices[ci];
+        endlessApplyPowerup(key);
+        endlessNextRound();
+        return;
+      }
+    }
+    return;
+  }
+  if ((state === 'playing' || state === 'bossfight' || state === 'epsteinfight' || state === 'fusionfight' || state === 'splitfight' || state === 'endless') && player.alive) throwProjectile();
   // Win/lose retry buttons via mouse click
   if ((state === 'won' || state === 'dead') && restartCooldown <= 0) {
     const btnY = state === 'won' ? H/2 + 30 : H/2 + 20;
@@ -2430,10 +2862,10 @@ canvas.addEventListener('click', e => {
     if (cy > btnY && cy < btnY + btnH2) {
       if (cx > W/2 - btnW2 - 10 && cx < W/2 - 10) {
         // Retry
-        if (mpEnabled) { mpVoteRetry(); if (isHost) { const tc = Object.keys(roomPlayers).length; const rc = Object.keys(mpRetryVotes).length; if (rc >= tc) mpTriggerRetry(); } } else { startGame(); }
+        if (mpEnabled) { mpVoteRetry(); if (isHost) { const tc = Object.keys(roomPlayers).length; const rc = Object.keys(mpRetryVotes).length; if (rc >= tc) mpTriggerRetry(); } } else if (endless.round > 0) { startEndless(); } else { startGame(); }
       } else if (cx > W/2 + 10 && cx < W/2 + btnW2 + 10) {
         // Leave
-        if (mpEnabled) { leaveRoom(); } state = 'menu'; menuState = 'main'; menuSelection = 0;
+        if (mpEnabled) { leaveRoom(); } endless.round = 0; state = 'menu'; menuState = 'main'; menuSelection = 0;
       }
     }
   }
@@ -2509,7 +2941,7 @@ canvas.addEventListener('touchstart', e => {
     if (state === 'menu') {
       if (menuState === 'main') {
         const menuY = H * 0.35;
-        for (let i = 0; i < 8; i++) {
+        for (let i = 0; i < 9; i++) {
           const y = menuY + i * 40;
           if (cx > W/2 - 160 && cx < W/2 + 160 && cy > y - 18 && cy < y + 18) {
             menuSelection = i;
@@ -2517,13 +2949,14 @@ canvas.addEventListener('touchstart', e => {
               if (tutorialDone) { startGame(); }
               else { state = 'tutorial'; tutorialPage = 0; }
             }
-            else if (i === 1) { menuState = 'multiplayer'; mpMenuSelection = 0; authError = ''; }
-            else if (i === 2) { menuState = 'difficulty'; menuSelection = 0; }
-            else if (i === 3) { menuState = 'settings'; menuSelection = 0; }
-            else if (i === 4) { menuState = 'controls'; menuSelection = 0; }
-            else if (i === 5) { friendsBackTo = 'main'; menuState = 'friends'; friendMenuSelection = 0; authError = ''; loadFriendsList(); }
-            else if (i === 6) { menuState = 'credits'; menuSelection = 0; }
-            else if (i === 7) { menuState = 'cheats'; cheatSelection = 0; }
+            else if (i === 1) { startEndless(); }
+            else if (i === 2) { menuState = 'multiplayer'; mpMenuSelection = 0; authError = ''; }
+            else if (i === 3) { menuState = 'difficulty'; menuSelection = 0; }
+            else if (i === 4) { menuState = 'settings'; menuSelection = 0; }
+            else if (i === 5) { menuState = 'controls'; menuSelection = 0; }
+            else if (i === 6) { friendsBackTo = 'main'; menuState = 'friends'; friendMenuSelection = 0; authError = ''; loadFriendsList(); }
+            else if (i === 7) { menuState = 'credits'; menuSelection = 0; }
+            else if (i === 8) { menuState = 'cheats'; cheatSelection = 0; }
             return;
           }
         }
@@ -2756,17 +3189,38 @@ canvas.addEventListener('touchstart', e => {
       if (cy > btnY && cy < btnY + btnH) {
         if (cx > W/2 - btnW - 10 && cx < W/2 - 10) {
           // Retry button
-          if (mpEnabled) { mpVoteRetry(); if (isHost) { const tc = Object.keys(roomPlayers).length; const rc = Object.keys(mpRetryVotes).length; if (rc >= tc) mpTriggerRetry(); } } else { startGame(); }
+          if (mpEnabled) { mpVoteRetry(); if (isHost) { const tc = Object.keys(roomPlayers).length; const rc = Object.keys(mpRetryVotes).length; if (rc >= tc) mpTriggerRetry(); } } else if (endless.round > 0) { startEndless(); } else { startGame(); }
         } else if (cx > W/2 + 10 && cx < W/2 + btnW + 10) {
           // Leave button
-          if (mpEnabled) { leaveRoom(); } state = 'menu'; menuState = 'main'; menuSelection = 0;
+          if (mpEnabled) { leaveRoom(); } endless.round = 0; state = 'menu'; menuState = 'main'; menuSelection = 0;
+        }
+      }
+      return;
+    }
+
+    // ── ENDLESS SHOP TOUCH ──
+    if (state === 'endlessShop' && endless.shopChoices.length > 0) {
+      const cardW = Math.min(220, (W - 60) / 3);
+      const cardH = 240;
+      const cardGap = 16;
+      const totalW3 = cardW * endless.shopChoices.length + cardGap * (endless.shopChoices.length - 1);
+      const startX3 = W / 2 - totalW3 / 2;
+      const cardY3 = H * 0.3;
+      for (let ci = 0; ci < endless.shopChoices.length; ci++) {
+        const cxCard = startX3 + ci * (cardW + cardGap);
+        if (cx > cxCard && cx < cxCard + cardW && cy > cardY3 && cy < cardY3 + cardH) {
+          endless.shopSelection = ci;
+          const key = endless.shopChoices[ci];
+          endlessApplyPowerup(key);
+          endlessNextRound();
+          return;
         }
       }
       return;
     }
 
     // Gameplay touch controls — joystick up to jump
-    if (state === 'playing' || state === 'intro' || state === 'bossfight' || state === 'epsteinfight' || state === 'fusionfight' || state === 'splitfight') {
+    if (state === 'playing' || state === 'intro' || state === 'bossfight' || state === 'epsteinfight' || state === 'fusionfight' || state === 'splitfight' || state === 'endless') {
       // Spectator touch — tap left/right half to cycle players
       if (mpSpectating) {
         const alive = getAlivePlayerList();
@@ -3306,10 +3760,21 @@ function throwProjectile() {
   if (state === 'hawkingDeath' || state === 'hawkingRefusal') return;
   const p = player;
   if (p.throwCooldown > 0 && !cheats.noCooldown) return;
-  p.throwCooldown = cheats.noCooldown ? 0 : 18;
+  // Endless mode cooldown reduction
+  let baseCooldown = 18;
+  if (state === 'endless' && endless.powerups.cooldownReduce > 0) {
+    baseCooldown = Math.round(18 * Math.pow(0.8, endless.powerups.cooldownReduce));
+  }
+  p.throwCooldown = cheats.noCooldown ? 0 : baseCooldown;
   // Aim: mouse on PC, joystick on touch, fallback to facing direction
   let vx, vy;
-  const pjSpd = cheats.bigProjectiles ? 20 : 12;
+  let pjSpd = cheats.bigProjectiles ? 20 : 12;
+  // Endless mode projectile speed + damage boost
+  if (state === 'endless' && endless.powerups.projSpeed > 0) {
+    pjSpd *= (1 + endless.powerups.projSpeed * 0.2);
+  }
+  // Endless multi-shot
+  const endlessExtraShots = (state === 'endless') ? endless.powerups.multiShot : 0;
   if (touchAim.active) {
     // Touch aim joystick — fire in joystick direction
     vx = Math.cos(touchAim.angle) * pjSpd;
@@ -3330,6 +3795,8 @@ function throwProjectile() {
     vy = 0;
   }
   const pjSize = cheats.bigProjectiles ? 50 : 28;
+  // Endless damage multiplier stored on projectile
+  const endlessDmgMult = (state === 'endless') ? (1 + endless.powerups.dmgBoost * 0.25) : 1;
   projectiles.push({
     x: p.x + p.w / 2,
     y: p.y + p.h / 3,
@@ -3338,7 +3805,23 @@ function throwProjectile() {
     w: pjSize,
     h: pjSize,
     life: 100,
+    dmgMult: endlessDmgMult,
   });
+  // Extra projectiles from multiShot powerup
+  for (let es = 0; es < endlessExtraShots; es++) {
+    const spreadAngle = (es + 1) * 0.22 * ((es % 2 === 0) ? 1 : -1);
+    const cos = Math.cos(spreadAngle), sin = Math.sin(spreadAngle);
+    projectiles.push({
+      x: p.x + p.w / 2,
+      y: p.y + p.h / 3,
+      vx: vx * cos - vy * sin,
+      vy: vx * sin + vy * cos,
+      w: pjSize,
+      h: pjSize,
+      life: 100,
+      dmgMult: endlessDmgMult,
+    });
+  }
 }
 
 // ── Collision ──
@@ -3808,7 +4291,7 @@ function update() {
     return;
   }
 
-  if (state !== 'playing' && state !== 'bossfight' && state !== 'epsteinfight' && state !== 'fusionfight' && state !== 'splitfight' && state !== 'hawkingRefusal' && state !== 'hawkingDeath' && state !== 'winCutscene') return;
+  if (state !== 'playing' && state !== 'bossfight' && state !== 'epsteinfight' && state !== 'fusionfight' && state !== 'splitfight' && state !== 'hawkingRefusal' && state !== 'hawkingDeath' && state !== 'winCutscene' && state !== 'endless' && state !== 'endlessShop') return;
 
   gameTimer++;
   const p = player;
@@ -3821,9 +4304,11 @@ function update() {
 
   // Input — skip if dead (spectating)
   if (p.alive) {
-  const left = keys['ArrowLeft'] || keys['KeyA'] || touchControls.left;
-  const right = keys['ArrowRight'] || keys['KeyD'] || touchControls.right;
-  const up = keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchControls.up;
+  // Freeze player movement during shop overlay
+  const shopFrozen = state === 'endlessShop';
+  const left = shopFrozen ? false : (keys['ArrowLeft'] || keys['KeyA'] || touchControls.left);
+  const right = shopFrozen ? false : (keys['ArrowRight'] || keys['KeyD'] || touchControls.right);
+  const up = shopFrozen ? false : (keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || touchControls.up);
 
   // If a touch jump was queued between frames (quick flick), force rising edge
   // so double jumps aren't missed when down→up happens within one frame
@@ -3838,7 +4323,11 @@ function update() {
   if (jumpFlashTimer > 0) jumpFlashTimer--;
 
   // Horizontal movement
-  const pSpeed = cheats.speedBoost ? PLAYER_SPEED * 2 : PLAYER_SPEED;
+  let pSpeed = cheats.speedBoost ? PLAYER_SPEED * 2 : PLAYER_SPEED;
+  // Endless mode speed boost powerup
+  if ((state === 'endless' || state === 'endlessShop') && endless.powerups.speedBoost > 0) {
+    pSpeed *= (1 + endless.powerups.speedBoost * 0.15);
+  }
   if (left) { p.vx = -pSpeed; p.facing = -1; }
   else if (right) { p.vx = pSpeed; p.facing = 1; }
   else { p.vx *= 0.7; }
@@ -3886,8 +4375,8 @@ function update() {
     spawnParticles(p.x + p.w / 2, p.y + p.h / 2, '#aaa', 4);
   }
 
-  // Climb big wall (disabled during bossfight - player is in arena)
-  if (bigWall && p.onWall && state !== 'bossfight' && state !== 'bossdialogue' && rectsOverlap(
+  // Climb big wall (disabled during bossfight/endless - player is in arena)
+  if (bigWall && p.onWall && state !== 'bossfight' && state !== 'bossdialogue' && state !== 'endless' && state !== 'endlessShop' && rectsOverlap(
     { x: p.x - 4, y: p.y, w: p.w + 8, h: p.h },
     bigWall
   )) {
@@ -3926,8 +4415,8 @@ function update() {
   }
 
   // Walls & platforms (exclude bigWall during bossfight - player is inside arena)
-  const inArena = state === 'bossfight' || state === 'bossdialogue' || state === 'cutscene' || state === 'epsteinfight' || state === 'phonecall' || state === 'fusioncutscene' || state === 'fusionfight' || state === 'splitfight' || state === 'hawkingRefusal' || state === 'hawkingDeath';
-  const allSolids = [...walls, ...(inArena ? arenaPlats : [bigWall])].filter(Boolean);
+  const inArena = state === 'bossfight' || state === 'bossdialogue' || state === 'cutscene' || state === 'epsteinfight' || state === 'phonecall' || state === 'fusioncutscene' || state === 'fusionfight' || state === 'splitfight' || state === 'hawkingRefusal' || state === 'hawkingDeath' || state === 'endless' || state === 'endlessShop';
+  const allSolids = [...walls, ...(inArena ? (state === 'endless' || state === 'endlessShop' ? endless.platforms : arenaPlats) : [bigWall])].filter(Boolean);
   for (const wall of allSolids) {
     if (!rectsOverlap(p, wall)) continue;
 
@@ -4744,7 +5233,8 @@ function update() {
     }
   }
 
-  // ── Bullets (guards shoot) ──
+  // ── Bullets (guards shoot) — skip during endless (handled in endless update block) ──
+  if (state !== 'endless' && state !== 'endlessShop') {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.x += b.vx;
@@ -4768,13 +5258,17 @@ function update() {
       bullets.splice(i, 1);
     }
   }
+  } // end non-endless bullet loop
 
   // Camera
   let targetCamX = p.x - W / 3;
   
+  // In endless mode — camera is handled in endless update block, skip normal camera
+  const isEndlessMode = state === 'endless' || state === 'endlessShop';
+  
   // In arena: track between player and active boss so boss stays on screen
   const inArenaState = state === 'bossfight' || state === 'bossdialogue' || state === 'epsteinfight' || state === 'phonecall' || state === 'cutscene' || state === 'fusioncutscene' || state === 'fusionfight' || state === 'splitfight' || state === 'hawkingRefusal' || state === 'hawkingDeath';
-  if (inArenaState && bigWall) {
+  if (!isEndlessMode && inArenaState && bigWall) {
     const bArenaW = 2400;
     const arenaLeftCam = bigWall.x + bigWall.w/2 - bArenaW/2;
     const arenaRightCam = arenaLeftCam + bArenaW;
@@ -4807,6 +5301,7 @@ function update() {
   // Faster lerp in arena for responsive tracking
   const camSpeed = inArenaState ? 0.15 : 0.1;
   
+  if (!isEndlessMode) {
   // Spectator camera — follow spectated player
   if (mpSpectating && mpSpectateTarget && roomPlayers[mpSpectateTarget]) {
     const sp = roomPlayers[mpSpectateTarget];
@@ -4854,6 +5349,7 @@ function update() {
   }
   // Clamp: don't look below ground (only when not in arena)
   if (!inArenaState && cameraY > 0) cameraY = 0;
+  } // end !isEndlessMode camera
 
   // ── VFX Updates ──
   if (screenFlash > 0) screenFlash--;
@@ -6142,6 +6638,232 @@ function update() {
     }
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // ENDLESS MODE UPDATE
+  // ════════════════════════════════════════════════════════════════
+  if (state === 'endless' || state === 'endlessShop') {
+    endless.roundTimer++;
+
+    // Camera: center on arena
+    const camTargetX = endless.arenaX + endless.arenaW / 2 - W / 2;
+    const camTargetY = endless.arenaY - 80;
+    cameraX += (camTargetX - cameraX) * 0.08;
+    cameraY += (camTargetY - cameraY) * 0.08;
+
+    // Regen powerup
+    if (state === 'endless' && endless.powerups.regenBoost > 0 && player.alive) {
+      const regenRate = [600, 420, 240][endless.powerups.regenBoost - 1]; // frames
+      if (endless.roundTimer % regenRate === 0 && player.hp < player.maxHp) {
+        player.hp++;
+      }
+    }
+
+    // Speed powerup modifies player speed
+    if (state === 'endless') {
+      const spdMult = 1 + endless.powerups.speedBoost * 0.15;
+      // Applied in movement: player.vx is already set. We just clamp differently.
+    }
+
+    // ── SPAWN ENEMIES ──
+    if (state === 'endless' && endless.spawnsLeft > 0) {
+      endless.spawnTimer--;
+      if (endless.spawnTimer <= 0) {
+        endlessSpawnEnemy();
+        endless.spawnsLeft--;
+        // Spawn interval gets shorter in later rounds
+        endless.spawnTimer = Math.max(15, 60 - endless.round * 2);
+      }
+    }
+
+    // ── UPDATE ENDLESS ENEMIES ──
+    const aX = endless.arenaX, aW = endless.arenaW, aH = endless.arenaH;
+    const floorY = endless.arenaY + aH;
+    for (const e of endless.enemies) {
+      if (e.dead) continue;
+      if (e.iFrames > 0) e.iFrames--;
+
+      // Chase player
+      const px = player.x + player.w / 2;
+      const py = player.y + player.h / 2;
+      const ex = e.x + e.w / 2;
+      const ey = e.y + e.h / 2;
+      const dx = px - ex;
+      const dy = py - ey;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+      // Move toward player
+      const moveSpd = e.speed * (1 + endless.round * 0.01);
+      if (Math.abs(dx) > 30) {
+        e.dir = dx > 0 ? 1 : -1;
+        e.x += e.dir * moveSpd;
+      }
+
+      // Simple gravity
+      e.vy += 0.5;
+      e.y += e.vy;
+
+      // Floor collision
+      if (e.y + e.h >= floorY) {
+        e.y = floorY - e.h;
+        e.vy = 0;
+      }
+
+      // Platform collisions
+      for (const plat of endless.platforms) {
+        if (plat.isFloor || plat.isSideWall) continue;
+        if (e.x + e.w > plat.x && e.x < plat.x + plat.w &&
+            e.y + e.h > plat.y && e.y + e.h < plat.y + 20 && e.vy >= 0) {
+          e.y = plat.y - e.h;
+          e.vy = 0;
+        }
+      }
+
+      // Wall bounds
+      if (e.x < aX + 5) { e.x = aX + 5; e.dir = 1; }
+      if (e.x + e.w > aX + aW - 5) { e.x = aX + aW - e.w - 5; e.dir = -1; }
+
+      // Jump if player is above and enemy is on ground-ish
+      if (dy < -80 && e.vy === 0 && Math.abs(dx) < 200 && Math.random() < 0.02) {
+        e.vy = -10 - Math.random() * 3;
+      }
+
+      // Animation
+      e.frameTimer++;
+      if (e.frameTimer > 8) { e.frameTimer = 0; e.frame = (e.frame + 1) % 4; }
+
+      // Shoot at player
+      e.shootCooldown--;
+      if (e.shootCooldown <= 0 && dist < 500) {
+        e.shootCooldown = ENDLESS_ENEMY_TIERS.find(t => t.type === e.type)?.shootCd || 80;
+        e.shootCooldown += Math.floor(Math.random() * 20);
+        // Fire a bullet toward player
+        const bspd = 3 + endless.round * 0.1;
+        bullets.push({
+          x: ex, y: ey,
+          vx: (dx / dist) * bspd,
+          vy: (dy / dist) * bspd,
+          w: 8, h: 8,
+          dmg: e.dmg,
+          life: 200,
+        });
+      }
+
+      // Contact damage to player
+      if (player.alive && player.iFrames <= 0 && rectsOverlap(player, e)) {
+        player.hp -= e.dmg;
+        player.iFrames = 40;
+        shakeTimer = 10;
+        spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#ff4444', 10);
+        if (player.hp <= 0) {
+          handlePlayerDeath();
+          // Save high score
+          if (endless.round > endless.highScore) {
+            endless.highScore = endless.round;
+            localStorage.setItem('endlessHighScore', String(endless.highScore));
+          }
+        }
+      }
+    }
+
+    // Remove dead enemies
+    for (let i = endless.enemies.length - 1; i >= 0; i--) {
+      if (endless.enemies[i].dead) endless.enemies.splice(i, 1);
+    }
+
+    // ── PROJECTILE vs ENDLESS ENEMIES (handled in main projectile loop below?) ──
+    // We add collision in the projectile loop via a check
+    // (see projectile loop modification)
+
+    // ── BULLETS (enemy projectiles) vs PLAYER — already handled by existing bullet code, but
+    // we need to update bullets in endless
+    if (state === 'endless') {
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        if (b.life !== undefined) { b.life--; if (b.life <= 0) { bullets.splice(i, 1); continue; } }
+        // Hit player
+        if (player.alive && player.iFrames <= 0 && rectsOverlap(player, b)) {
+          const dmg = b.dmg || 1;
+          player.hp -= dmg;
+          player.iFrames = 30;
+          shakeTimer = 8;
+          spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#ff4444', 8);
+          bullets.splice(i, 1);
+          if (player.hp <= 0) {
+            handlePlayerDeath();
+            if (endless.round > endless.highScore) {
+              endless.highScore = endless.round;
+              localStorage.setItem('endlessHighScore', String(endless.highScore));
+            }
+          }
+          continue;
+        }
+        // Out of bounds
+        if (b.x < endless.arenaX - 50 || b.x > endless.arenaX + endless.arenaW + 50 ||
+            b.y < endless.arenaY - 50 || b.y > endless.arenaY + endless.arenaH + 50) {
+          bullets.splice(i, 1);
+        }
+      }
+    }
+
+    // ── CHECK ROUND COMPLETE ──
+    if (state === 'endless' && endless.spawnsLeft <= 0 && endless.enemies.length === 0 && player.alive) {
+      // Round cleared!
+      state = 'endlessShop';
+      endless.intermission = true;
+      endless.intermissionTimer = 0;
+      endlessGenerateShop();
+      // Heal player slightly between rounds
+      player.hp = Math.min(player.hp + 3, player.maxHp);
+      player.iFrames = 60;
+      bullets = [];
+      // Flash
+      screenFlash = 20;
+      screenFlashColor = '#44ff44';
+    }
+
+    // ── SHOP UPDATE ──
+    if (state === 'endlessShop') {
+      endless.intermissionTimer++;
+    }
+  }
+
+  // ── PROJECTILE vs ENDLESS ENEMIES (inside main projectile loop) ──
+  // We need to add this in the projectile update section. Let's do it here after the enemy update.
+  if (state === 'endless') {
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const proj = projectiles[i];
+      if (!proj) continue;
+      let hit = false;
+      for (let ei = endless.enemies.length - 1; ei >= 0; ei--) {
+        const e = endless.enemies[ei];
+        if (e.dead) continue;
+        if (rectsOverlap(proj, e)) {
+          const dmg = Math.ceil((proj.dmgMult || 1) * (cheats.oneHitKill ? 999 : 1));
+          e.hp -= dmg;
+          e.iFrames = 5;
+          spawnParticles(e.x + e.w / 2, e.y + e.h / 3, e.color, 8);
+          shakeTimer = 4;
+          if (e.hp <= 0) {
+            e.dead = true;
+            endless.totalKills++;
+            spawnParticles(e.x + e.w / 2, e.y + e.h / 2, e.color, 20);
+            spawnParticles(e.x + e.w / 2, e.y + e.h / 2, '#ffdd44', 10);
+            shakeTimer = 8;
+            // Vampirism heal
+            if (endless.powerups.vampirism > 0 && player.alive) {
+              player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
+            }
+          }
+          hit = true;
+          break;
+        }
+      }
+      if (hit) { projectiles.splice(i, 1); }
+    }
+  }
+
   // Particles
   particles = particles.filter(pt => {
     pt.x += pt.vx;
@@ -6791,6 +7513,139 @@ function draw() {
         ctx.lineTo(gx - 80, gy + 50);
       }
       ctx.fill();
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // ENDLESS MODE — ARENA & ENEMY DRAWING (world-space)
+  // ════════════════════════════════════════════════════════════════
+  if (state === 'endless' || state === 'endlessShop') {
+    const eaX = endless.arenaX, eaW = endless.arenaW, eaH = endless.arenaH;
+    const eaY = endless.arenaY;
+    const eFloorY = eaY + eaH;
+
+    // Arena background
+    const bgGrad2 = ctx.createLinearGradient(eaX, eaY, eaX, eFloorY);
+    bgGrad2.addColorStop(0, '#1a1a2e');
+    bgGrad2.addColorStop(0.5, '#16213e');
+    bgGrad2.addColorStop(1, '#0f3460');
+    ctx.fillStyle = bgGrad2;
+    ctx.fillRect(eaX, eaY, eaW, eaH);
+
+    // Dark grid lines on background
+    ctx.strokeStyle = '#ffffff08';
+    ctx.lineWidth = 1;
+    for (let gx = eaX; gx < eaX + eaW; gx += 60) {
+      ctx.beginPath(); ctx.moveTo(gx, eaY); ctx.lineTo(gx, eFloorY); ctx.stroke();
+    }
+    for (let gy = eaY; gy < eFloorY; gy += 60) {
+      ctx.beginPath(); ctx.moveTo(eaX, gy); ctx.lineTo(eaX + eaW, gy); ctx.stroke();
+    }
+
+    // Round number in background
+    ctx.fillStyle = '#ffffff06';
+    ctx.font = `bold ${Math.min(300, eaW * 0.25)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(String(endless.round), eaX + eaW / 2, eaY + eaH * 0.65);
+
+    // Floor
+    const floorGrad = ctx.createLinearGradient(eaX, eFloorY, eaX, eFloorY + 30);
+    floorGrad.addColorStop(0, '#2a2a4a');
+    floorGrad.addColorStop(1, '#1a1a2e');
+    ctx.fillStyle = floorGrad;
+    ctx.fillRect(eaX, eFloorY, eaW, 30);
+    // Floor top highlight
+    ctx.fillStyle = '#ffffff22';
+    ctx.fillRect(eaX, eFloorY, eaW, 2);
+
+    // Side walls
+    ctx.fillStyle = '#1a1a3a';
+    ctx.fillRect(eaX - 30, eaY, 30, eaH + 30);
+    ctx.fillRect(eaX + eaW, eaY, 30, eaH + 30);
+    // Side wall inner glow
+    ctx.fillStyle = '#ffffff11';
+    ctx.fillRect(eaX - 2, eaY, 2, eaH);
+    ctx.fillRect(eaX + eaW, eaY, 2, eaH);
+
+    // Platforms
+    for (const plat of endless.platforms) {
+      if (plat.isFloor || plat.isSideWall) continue;
+      const pGrad = ctx.createLinearGradient(plat.x, plat.y, plat.x, plat.y + plat.h);
+      pGrad.addColorStop(0, '#3a3a6a');
+      pGrad.addColorStop(1, '#2a2a4a');
+      ctx.fillStyle = pGrad;
+      ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+      // Platform top
+      ctx.fillStyle = '#88aaff33';
+      ctx.fillRect(plat.x, plat.y, plat.w, 2);
+    }
+
+    // Draw endless enemies
+    for (const e of endless.enemies) {
+      if (e.dead) continue;
+      const ex = e.x, ey = e.y;
+      const bounce = Math.sin(e.frame * Math.PI / 2) * 2;
+
+      // Shadow
+      ctx.fillStyle = '#00000044';
+      ctx.beginPath();
+      ctx.ellipse(ex + e.w / 2, eFloorY, e.w * 0.6, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw character image
+      const eImg = images[e.imgKey];
+      if (eImg) {
+        ctx.save();
+        // Damage flash
+        if (e.iFrames > 0) {
+          ctx.globalAlpha = 0.5 + Math.sin(Date.now() / 30) * 0.3;
+        }
+        if (e.dir < 0) {
+          ctx.translate(ex + e.w, ey - bounce);
+          ctx.scale(-1, 1);
+          ctx.drawImage(eImg, 0, 0, e.w, e.h);
+        } else {
+          ctx.drawImage(eImg, ex, ey - bounce, e.w, e.h);
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore();
+
+        // Color tint overlay for enemy type
+        ctx.save();
+        ctx.globalAlpha = 0.15;
+        ctx.fillStyle = e.color;
+        ctx.fillRect(ex, ey - bounce, e.w, e.h);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      } else {
+        // Fallback rectangle
+        ctx.fillStyle = e.color;
+        ctx.fillRect(ex, ey - bounce, e.w, e.h);
+      }
+
+      // HP bar
+      const hpPct = e.hp / e.maxHp;
+      ctx.fillStyle = '#000000aa';
+      ctx.fillRect(ex, ey - 14 - bounce, e.w, 5);
+      ctx.fillStyle = hpPct > 0.5 ? '#44cc44' : hpPct > 0.25 ? '#ccaa22' : '#cc2222';
+      ctx.fillRect(ex, ey - 14 - bounce, e.w * hpPct, 5);
+
+      // Type label
+      ctx.fillStyle = e.color + '88';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(e.type.toUpperCase(), ex + e.w / 2, ey - 18 - bounce);
+    }
+
+    // Draw bullets (enemy projectiles)
+    for (const b of bullets) {
+      ctx.fillStyle = '#ff4444';
+      ctx.shadowColor = '#ff0000';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
     }
   }
 
@@ -8677,6 +9532,166 @@ function draw() {
   }
 
   // ── HUD ──
+
+  // ═══ ENDLESS MODE HUD ═══
+  if (state === 'endless' || state === 'endlessShop') {
+    ctx.textAlign = 'left';
+
+    // Player HP bar (top-left)
+    const hpBarX = 12, hpBarY = 12, hpBarW = 160, hpBarH = 20;
+    ctx.fillStyle = '#00000088';
+    ctx.fillRect(hpBarX - 2, hpBarY - 2, hpBarW + 4, hpBarH + 4);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(hpBarX, hpBarY, hpBarW, hpBarH);
+    const pHpPct = player.hp / player.maxHp;
+    const hpCol = pHpPct > 0.5 ? '#44ff44' : pHpPct > 0.25 ? '#ffcc22' : '#ff4444';
+    ctx.fillStyle = hpCol;
+    ctx.fillRect(hpBarX, hpBarY, hpBarW * pHpPct, hpBarH);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(`HP: ${player.hp}/${player.maxHp}`, hpBarX + 5, hpBarY + 15);
+
+    // Round counter (top-center)
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#88ccff';
+    ctx.font = 'bold 28px monospace';
+    ctx.shadowColor = '#4488ff';
+    ctx.shadowBlur = 10;
+    ctx.fillText(`ROUND ${endless.round}`, W / 2, 32);
+    ctx.shadowBlur = 0;
+
+    // Enemies remaining
+    const remainCount = endless.enemies.length + endless.spawnsLeft;
+    ctx.fillStyle = remainCount > 0 ? '#ff8844' : '#44ff88';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText(`Enemies: ${remainCount}`, W / 2, 52);
+
+    // Kill counter + high score (top-right)
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#ffcc44';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText(`Kills: ${endless.totalKills}`, W - 12, 24);
+    ctx.fillStyle = '#888';
+    ctx.font = '11px monospace';
+    ctx.fillText(`Best: Round ${endless.highScore}`, W - 12, 40);
+
+    // Active power-ups (bottom-left)
+    ctx.textAlign = 'left';
+    let puY = H - 18;
+    const pu = endless.powerups;
+    const puKeys = Object.keys(ENDLESS_POWERUP_DEFS);
+    for (let pi = puKeys.length - 1; pi >= 0; pi--) {
+      const k = puKeys[pi];
+      if (pu[k] <= 0) continue;
+      const def = ENDLESS_POWERUP_DEFS[k];
+      // Draw canvas icon + text
+      drawEndlessIcon(ctx, def.icon, 22, puY - 5, 14, def.color);
+      ctx.fillStyle = def.color;
+      ctx.font = '12px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${def.name} Lv.${pu[k]}`, 34, puY);
+      puY -= 18;
+    }
+    ctx.textAlign = 'left';
+  }
+
+  // ═══ ENDLESS SHOP OVERLAY ═══
+  if (state === 'endlessShop' && endless.shopChoices.length > 0) {
+    // Semi-transparent overlay
+    ctx.fillStyle = '#000000aa';
+    ctx.fillRect(0, 0, W, H);
+
+    // Title
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffcc44';
+    ctx.font = 'bold 32px monospace';
+    ctx.shadowColor = '#ffaa0066';
+    ctx.shadowBlur = 15;
+    ctx.fillText('CHOOSE YOUR POWER-UP', W / 2, H * 0.18);
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '14px monospace';
+    ctx.fillText(`Round ${endless.round} cleared! Pick a power-up.`, W / 2, H * 0.24);
+
+    // Draw 3 power-up cards (sized for touch-friendliness on iPad)
+    const cardW = Math.min(220, (W - 60) / 3);
+    const cardH = 240;
+    const cardGap = 16;
+    const totalW = cardW * endless.shopChoices.length + cardGap * (endless.shopChoices.length - 1);
+    const startX = W / 2 - totalW / 2;
+    const cardY = H * 0.3;
+
+    for (let ci = 0; ci < endless.shopChoices.length; ci++) {
+      const key = endless.shopChoices[ci];
+      const def = ENDLESS_POWERUP_DEFS[key];
+      const curLevel = endless.powerups[key];
+      const selected = ci === endless.shopSelection;
+      const cx = startX + ci * (cardW + cardGap);
+
+      // Card background
+      ctx.fillStyle = selected ? '#222244' : '#111122';
+      ctx.fillRect(cx, cardY, cardW, cardH);
+      // Border glow
+      ctx.strokeStyle = selected ? def.color : '#444466';
+      ctx.lineWidth = selected ? 3 : 1;
+      ctx.strokeRect(cx, cardY, cardW, cardH);
+      // Selected glow
+      if (selected) {
+        ctx.shadowColor = def.color;
+        ctx.shadowBlur = 20;
+        ctx.strokeRect(cx, cardY, cardW, cardH);
+        ctx.shadowBlur = 0;
+      }
+
+      // Icon (canvas-drawn)
+      drawEndlessIcon(ctx, def.icon, cx + cardW / 2, cardY + 42, 36, def.color);
+
+      // Name
+      ctx.font = 'bold 14px monospace';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(def.name, cx + cardW / 2, cardY + 85);
+
+      // Description
+      ctx.font = '11px monospace';
+      ctx.fillStyle = '#aaa';
+      ctx.fillText(def.desc, cx + cardW / 2, cardY + 108);
+
+      // Current level
+      if (curLevel > 0) {
+        ctx.fillStyle = '#88ff88';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(`Lv.${curLevel} → Lv.${curLevel + 1}`, cx + cardW / 2, cardY + 135);
+        ctx.fillStyle = '#ffcc44';
+        ctx.font = '10px monospace';
+        ctx.fillText('UPGRADE!', cx + cardW / 2, cardY + 152);
+      } else {
+        ctx.fillStyle = '#44aaff';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText('NEW!', cx + cardW / 2, cardY + 135);
+      }
+
+      // Max indicator
+      ctx.fillStyle = '#666';
+      ctx.font = '10px monospace';
+      ctx.fillText(`Max: ${def.max}`, cx + cardW / 2, cardY + cardH - 15);
+
+      // Key hint
+      if (selected) {
+        ctx.fillStyle = def.color;
+        ctx.font = 'bold 13px monospace';
+        ctx.fillText('▶ ENTER / TAP ◀', cx + cardW / 2, cardY + cardH - 35);
+      }
+    }
+
+    // Controls hint
+    ctx.fillStyle = '#888';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('← → to select, ENTER to choose', W / 2, cardY + cardH + 30);
+    ctx.textAlign = 'left';
+  }
+
   // Distance indicator
   if (state === 'playing' && bigWall) {
     const dist = Math.max(0, bigWall.x - player.x);
@@ -11941,6 +12956,14 @@ function draw() {
         ctx.lineTo(x - s*0.4, y + s*0.5);
         ctx.closePath();
         ctx.fill();
+      } else if (type === 'endless') {
+        // Infinity symbol
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.bezierCurveTo(x - s*0.6, y - s*0.6, x - s*0.8, y + s*0.6, x, y);
+        ctx.bezierCurveTo(x + s*0.8, y - s*0.6, x + s*0.6, y + s*0.6, x, y);
+        ctx.stroke();
       } else if (type === 'difficulty') {
         // Crossed swords
         ctx.beginPath();
@@ -12123,8 +13146,8 @@ function draw() {
     }
 
     if (menuState === 'main') {
-      const optionNames = ['PLAY', 'MULTIPLAYER', 'DIFFICULTY', 'SETTINGS', 'CONTROLS', 'FRIENDS', 'CREDITS', 'CHEATS'];
-      const optionIcons = ['play', 'controls', 'difficulty', 'settings', 'controls', 'credits', 'credits', 'settings'];
+      const optionNames = ['PLAY', 'ENDLESS', 'MULTIPLAYER', 'DIFFICULTY', 'SETTINGS', 'CONTROLS', 'FRIENDS', 'CREDITS', 'CHEATS'];
+      const optionIcons = ['play', 'endless', 'controls', 'difficulty', 'settings', 'controls', 'credits', 'credits', 'settings'];
       const menuY = H * 0.35;
       for (let i = 0; i < optionNames.length; i++) {
         const selected = menuSelection === i;
@@ -13263,22 +14286,53 @@ function draw() {
     ctx.fillStyle = '#000000bb';
     ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = '#ff4444';
-    ctx.font = 'bold 36px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('¡ATRAPADO!', W / 2, H / 2 - 60);
 
-    ctx.fillStyle = '#ccc';
-    ctx.font = '16px monospace';
-    if (mpEnabled) {
-      ctx.fillText('All players have been caught!', W / 2, H / 2 - 25);
+    if (endless.round > 0) {
+      // ── ENDLESS MODE DEATH SCREEN ──
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 36px monospace';
+      ctx.fillText('ELIMINATED', W / 2, H / 2 - 80);
+
+      ctx.fillStyle = '#ffcc44';
+      ctx.font = 'bold 24px monospace';
+      ctx.fillText(`Round ${endless.round}`, W / 2, H / 2 - 45);
+
+      ctx.fillStyle = '#ccc';
+      ctx.font = '16px monospace';
+      ctx.fillText(`Kills: ${endless.totalKills}`, W / 2, H / 2 - 18);
+
+      if (endless.round >= endless.highScore) {
+        // Draw stars + text (no emojis)
+        drawEndlessIcon(ctx, 'star', W / 2 - 100, H / 2 - 3, 14, '#ffdd44');
+        drawEndlessIcon(ctx, 'star', W / 2 + 100, H / 2 - 3, 14, '#ffdd44');
+        ctx.fillStyle = '#ffdd44';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('NEW HIGH SCORE!', W / 2, H / 2 + 2);
+      } else {
+        ctx.fillStyle = '#888';
+        ctx.font = '12px monospace';
+        ctx.fillText(`Best: Round ${endless.highScore}`, W / 2, H / 2 + 2);
+      }
     } else {
-      ctx.fillText('La migra te atrapó! Border patrol got you!', W / 2, H / 2 - 25);
-    }
+      // ── NORMAL DEATH SCREEN ──
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 36px monospace';
+      ctx.fillText('¡ATRAPADO!', W / 2, H / 2 - 60);
 
-    ctx.fillStyle = '#888';
-    ctx.font = '12px monospace';
-    ctx.fillText(`Difficulty: ${settings.difficulty.toUpperCase()}`, W / 2, H / 2 + 0);
+      ctx.fillStyle = '#ccc';
+      ctx.font = '16px monospace';
+      if (mpEnabled) {
+        ctx.fillText('All players have been caught!', W / 2, H / 2 - 25);
+      } else {
+        ctx.fillText('La migra te atrapó! Border patrol got you!', W / 2, H / 2 - 25);
+      }
+
+      ctx.fillStyle = '#888';
+      ctx.font = '12px monospace';
+      ctx.fillText(`Difficulty: ${settings.difficulty.toUpperCase()}`, W / 2, H / 2 + 0);
+    }
 
     // Retry / Leave buttons
     if (restartCooldown <= 0) {
