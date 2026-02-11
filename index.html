@@ -1136,6 +1136,7 @@ function getAlivePlayerList() {
 // Handle player death — spectate in MP, game over in solo
 function handlePlayerDeath() {
   const p = player;
+  if (!p.alive) return; // prevent re-entry
   p.alive = false;
   p.hp = 0;
   p.iFrames = 99999; // prevent all further damage checks
@@ -1897,7 +1898,8 @@ function syncEnemyData() {
     }
     if (bullets.length > 0) {
       enemies.endlessBullets = bullets.map(b => ({
-        x: Math.round(b.x), y: Math.round(b.y), vx: b.vx, vy: b.vy, life: b.life
+        x: Math.round(b.x), y: Math.round(b.y), vx: b.vx, vy: b.vy, life: b.life,
+        w: b.w || 8, h: b.h || 8, dmg: b.dmg || 1
       }));
     }
   }
@@ -2153,7 +2155,7 @@ function applyEnemyData() {
   // Apply endless bullets on guest
   if (state === 'endless' || state === 'endlessShop') {
     if (d.endlessBullets) {
-      bullets = d.endlessBullets.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, life: b.life }));
+      bullets = d.endlessBullets.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, life: b.life, w: b.w || 8, h: b.h || 8, dmg: b.dmg || 1 }));
     } else {
       bullets = [];
     }
@@ -2722,7 +2724,9 @@ let bossDialogue = { active: false, texts: [], index: 0, timer: 0 };
 
 // ── Input ──
 const keys = {};
+const keysJustPressed = {}; // rising-edge flags, consumed on read
 window.addEventListener('keydown', e => {
+  if (!keys[e.code]) keysJustPressed[e.code] = true; // only on initial press
   keys[e.code] = true;
   
   // Menu navigation
@@ -2947,6 +2951,7 @@ window.addEventListener('keydown', e => {
       endless.highScore = endless.round;
       localStorage.setItem('endlessHighScore', String(endless.highScore));
     }
+    endless.round = 0;
     state = 'menu'; menuState = 'main'; menuSelection = 1;
     return;
   }
@@ -3011,6 +3016,7 @@ window.addEventListener('keydown', e => {
       } else {
         // Leave
         if (mpEnabled) { leaveRoom(); }
+        endless.round = 0;
         state = 'menu'; menuState = 'main'; menuSelection = 0;
       }
     }
@@ -4904,10 +4910,12 @@ function update() {
       dashDir = left ? -1 : right ? 1 : p.facing;
       touchDashQueued = false;
     } else if (!_isTouchDev) {
-      // Keyboard: double-tap left/right within 250ms
+      // Keyboard: double-tap left/right within 250ms (rising edge only)
       if (!endless._dashState) endless._dashState = { lastDir: 0, lastTime: 0 };
       const now = Date.now();
-      dashDir = left ? -1 : right ? 1 : 0;
+      const leftJust = keysJustPressed['ArrowLeft'] || keysJustPressed['KeyA'];
+      const rightJust = keysJustPressed['ArrowRight'] || keysJustPressed['KeyD'];
+      dashDir = leftJust ? -1 : rightJust ? 1 : 0;
       if (dashDir !== 0) {
         if (dashDir === endless._dashState.lastDir && now - endless._dashState.lastTime < 250) {
           doDash = true;
@@ -4917,6 +4925,11 @@ function update() {
           endless._dashState.lastTime = now;
         }
       }
+      // Consume edge flags
+      delete keysJustPressed['ArrowLeft'];
+      delete keysJustPressed['ArrowRight'];
+      delete keysJustPressed['KeyA'];
+      delete keysJustPressed['KeyD'];
     }
 
     if (doDash && dashDir !== 0) {
@@ -6319,16 +6332,18 @@ function update() {
       fb.slamCooldown = fb.phase === 2 ? 120 + Math.floor(Math.random()*60) : 180 + Math.floor(Math.random()*80);
       fb.vy = -18;
       shakeTimer = 15;
-      // After landing, shockwave
-      setTimeout(() => {
-        if (!fusionBoss || fusionBoss.dead) return;
+      fb._slamDelay = 36; // ~600ms at 60fps, tick-based
+    }
+    // Slam shockwave after landing delay
+    if (fb._slamDelay !== undefined && fb._slamDelay > 0) {
+      fb._slamDelay--;
+      if (fb._slamDelay <= 0 && !fusionBoss.dead) {
         shakeTimer = 20;
         screenFlash = 8;
         screenFlashColor = '#ff440044';
         bossVfx.push({ type: 'ring', x: fb.x+fb.w/2, y: fb.y+fb.h, radius: 10, maxRadius: 400, life: 25, maxLife: 25, color: '#ff4400' });
-        // Set slam shock flag for ALL players to check outside gate
         fusionBoss._slamShock = 25;
-      }, 600);
+      }
     }
 
     // Attack 3: Dash charge (phase 2)
@@ -6338,8 +6353,13 @@ function update() {
         fb.dashCooldown = 100 + Math.floor(Math.random()*80);
         fb.charging = true;
         fb.chargeVx = fb.dir * 12;
-        setTimeout(() => { if (fusionBoss) fusionBoss.charging = false; }, 800);
+        fb._chargeDelay = 48; // ~800ms at 60fps, tick-based
         bossVfx.push({ type: 'text', x: fb.x+fb.w/2, y: fb.y - 20, text: 'CHARGE!', life: 40, maxLife: 40, color: '#ff4400' });
+      }
+      // Tick down charge duration
+      if (fb._chargeDelay !== undefined && fb._chargeDelay > 0) {
+        fb._chargeDelay--;
+        if (fb._chargeDelay <= 0 && fusionBoss) fusionBoss.charging = false;
       }
       if (fb.charging) {
         fb.x += fb.chargeVx;
@@ -6532,8 +6552,12 @@ function update() {
         // Ground slam every 140 frames
         if (mb.specialTimer % 140 === 0 && mb.vy === 0) {
           mb.vy = -14;
-          setTimeout(() => {
-            if (mb.dead) return;
+          mb._slamDelay = 21; // ~350ms at 60fps, tick-based
+        }
+        // Slam shockwave after delay
+        if (mb._slamDelay !== undefined && mb._slamDelay > 0) {
+          mb._slamDelay--;
+          if (mb._slamDelay <= 0 && !mb.dead) {
             shakeTimer = 15;
             spawnParticles(mb.x + mb.w/2, mb.y + mb.h, '#ff4400', 20);
             // Fire wave — ground projectiles spreading left and right
@@ -6548,7 +6572,7 @@ function update() {
             }
             // Trump slam shockwave — flag for ALL players
             mb._slamShock = 25;
-          }, 350);
+          }
         }
         // Rage roar — speed boost + rapid fire burst every 400 frames
         if (mb.specialTimer % 400 === 0) {
@@ -6703,7 +6727,6 @@ function update() {
       }
       else if (mb.name === 'HAWKING') {
         const isPhase2 = hawkingPhase2;
-        const hawkSpeed = hawkingAlone ? 1.2 : 0.6;
         // Hawking: Genius supreme — orbital ring + gravity well + black hole + time warp
         if (mb.shootCooldown <= 0) {
           mb.shootCooldown = isPhase2 ? 20 : (hawkingAlone ? 30 : 55);
@@ -6916,14 +6939,14 @@ function update() {
         hawk.x = arenaLeft + bArenaW/2 - hawk.w/2;
         hawk.y = arenaFloor - hawk.h - 50;
         hawk.vy = -15;
+        bossVfx.push({ type: 'text', x: hawk.x + hawk.w/2, y: hawk.y - 60, text: 'HAWKING TRANSCENDED', life: 180, maxLife: 180, color: '#ffd700' });
+        bossVfx.push({ type: 'ring', x: hawk.x + hawk.w/2, y: hawk.y + hawk.h/2, radius: 10, maxRadius: 800, life: 50, maxLife: 50, color: '#ffd700' });
       }
       // Restore player HP a bit
       player.hp = Math.min(player.maxHp, player.hp + 15);
       screenFlash = 80;
       screenFlashColor = '#ffd700';
       shakeTimer = 60;
-      bossVfx.push({ type: 'text', x: hawk.x + hawk.w/2, y: hawk.y - 60, text: 'HAWKING TRANSCENDED', life: 180, maxLife: 180, color: '#ffd700' });
-      bossVfx.push({ type: 'ring', x: hawk.x + hawk.w/2, y: hawk.y + hawk.h/2, radius: 10, maxRadius: 800, life: 50, maxLife: 50, color: '#ffd700' });
     }
   }
 
@@ -7312,20 +7335,32 @@ function update() {
     // Dash cooldown tick
     if (endless.dashCooldown > 0) endless.dashCooldown--;
 
-    // Freeze aura: slow nearby enemies
+    // Freeze aura: slow nearby enemies (uses multiplier, restores when out of range)
     if (state === 'endless' && endless.powerups.freezeAura > 0 && player.alive) {
       const freezeRadius = 120 + endless.powerups.freezeAura * 60;
+      const slowFactor = 0.6 - endless.powerups.freezeAura * 0.1;
       for (const e of endless.enemies) {
         if (e.dead) continue;
+        // Store original spawn speed on first encounter
+        if (e._origSpeed === undefined) e._origSpeed = e.speed;
         const dx = (e.x + e.w/2) - (player.x + player.w/2);
         const dy = (e.y + e.h/2) - (player.y + player.h/2);
         const dist = Math.sqrt(dx*dx + dy*dy);
         if (dist < freezeRadius) {
-          const slowFactor = 0.6 - endless.powerups.freezeAura * 0.1;
-          e.speed = (ENDLESS_ENEMY_TIERS.find(t => t.type === e.type)?.baseSpeed || 1.5) * slowFactor;
+          e.speed = e._origSpeed * slowFactor;
+          e._frozen = true;
           // Visual frost particles (occasional)
           if (Math.random() < 0.03) spawnParticles(e.x + e.w/2, e.y + e.h/3, '#88ccff', 2);
+        } else if (e._frozen) {
+          // Restore original speed when leaving radius
+          e.speed = e._origSpeed;
+          e._frozen = false;
         }
+      }
+    } else if (state === 'endless') {
+      // No freeze aura — make sure all enemies are unslowed
+      for (const e of endless.enemies) {
+        if (e._frozen && e._origSpeed !== undefined) { e.speed = e._origSpeed; e._frozen = false; }
       }
     }
 
@@ -7575,6 +7610,15 @@ function update() {
               e.dead = true;
               endless.totalKills++;
               spawnParticles(e.x + e.w/2, e.y + e.h/2, e.color, 15);
+              // Vampirism heal on thorns kill
+              if (endless.powerups.vampirism > 0 && player.alive) {
+                player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
+              }
+              // Lucky drop on thorns kill
+              if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12) {
+                spawnParticles(e.x + e.w/2, e.y + e.h/2, '#44ff44', 5);
+                if (player.alive) player.hp = Math.min(player.hp + 2, player.maxHp);
+              }
             }
           }
           if (player.hp <= 0) {
