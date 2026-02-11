@@ -525,7 +525,7 @@ const ENDLESS_ENEMY_TIERS = [
 
 function startEndless() {
   state = 'endless';
-  endless.round = 0;
+  endless.round = Math.max(0, endlessStartRound - 1); // cheats: start at chosen round
   endless.enemies = [];
   endless.totalKills = 0;
   endless.roundTimer = 0;
@@ -923,6 +923,7 @@ let cheats = {
   bigProjectiles: false,// larger, faster projectiles
   noCooldown: false,    // no throw cooldown
 };
+let endlessStartRound = 1; // what round to start endless on (cheats menu)
 let cheatSelection = 0;
 let menuBgRunners = []; // animated background runners
 let menuBgBullets = []; // background bullets to dodge
@@ -2717,15 +2718,21 @@ window.addEventListener('keydown', e => {
       }
     } else if (menuState === 'cheats') {
       const cheatKeys = Object.keys(cheats);
-      const totalItems = cheatKeys.length + 3; // cheats + skip + watch + back
+      const totalItems = cheatKeys.length + 4; // cheats + endless round + skip + watch + back
       if (e.code === 'ArrowUp' || e.code === 'KeyW') { cheatSelection--; if (cheatSelection < 0) cheatSelection = totalItems - 1; }
       if (e.code === 'ArrowDown' || e.code === 'KeyS') { cheatSelection++; if (cheatSelection >= totalItems) cheatSelection = 0; }
       if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ArrowRight' || e.code === 'ArrowLeft') {
         if (cheatSelection < cheatKeys.length) {
           cheats[cheatKeys[cheatSelection]] = !cheats[cheatKeys[cheatSelection]];
         } else if (cheatSelection === cheatKeys.length) {
-          skipToFinalBoss();
+          // Endless start round — left/right to adjust (hold shift for ±10), space/enter to reset
+          const step = e.shiftKey ? 10 : 1;
+          if (e.code === 'ArrowRight') endlessStartRound = Math.min(200, endlessStartRound + step);
+          else if (e.code === 'ArrowLeft') endlessStartRound = Math.max(1, endlessStartRound - step);
+          else endlessStartRound = 1; // reset on space/enter
         } else if (cheatSelection === cheatKeys.length + 1) {
+          skipToFinalBoss();
+        } else if (cheatSelection === cheatKeys.length + 2) {
           watchCutscene();
         } else {
           menuState = 'main'; menuSelection = 7;
@@ -3165,15 +3172,19 @@ canvas.addEventListener('click', e => {
     } else if (menuState === 'cheats') {
       const cheatKeys = Object.keys(cheats);
       const cheatY = H * 0.28;
-      const totalItems = cheatKeys.length + 3;
+      const totalItems = cheatKeys.length + 4;
       for (let i = 0; i < totalItems; i++) {
         const y = cheatY + i * 38;
         if (cx > W/2 - 220 && cx < W/2 + 220 && cy > y - 14 && cy < y + 18) {
           if (i < cheatKeys.length) {
             cheats[cheatKeys[i]] = !cheats[cheatKeys[i]];
           } else if (i === cheatKeys.length) {
-            skipToFinalBoss();
+            // Endless start round — tap left half to decrease, right half to increase
+            if (cx < W/2 + 120) endlessStartRound = Math.max(1, endlessStartRound - 1);
+            else endlessStartRound = Math.min(200, endlessStartRound + 1);
           } else if (i === cheatKeys.length + 1) {
+            skipToFinalBoss();
+          } else if (i === cheatKeys.length + 2) {
             watchCutscene();
           } else {
             menuState = 'main'; menuSelection = 7;
@@ -3539,13 +3550,17 @@ canvas.addEventListener('touchstart', e => {
       } else if (menuState === 'cheats') {
         const cheatKeys = Object.keys(cheats);
         const cheatY = H * 0.28;
-        const totalItems = cheatKeys.length + 3;
+        const totalItems = cheatKeys.length + 4;
         for (let i = 0; i < totalItems; i++) {
           const y = cheatY + i * 38;
           if (cx > W/2 - 220 && cx < W/2 + 220 && cy > y - 14 && cy < y + 18) {
             if (i < cheatKeys.length) cheats[cheatKeys[i]] = !cheats[cheatKeys[i]];
-            else if (i === cheatKeys.length) skipToFinalBoss();
-            else if (i === cheatKeys.length + 1) watchCutscene();
+            else if (i === cheatKeys.length) {
+              if (cx < W/2 + 120) endlessStartRound = Math.max(1, endlessStartRound - 1);
+              else endlessStartRound = Math.min(200, endlessStartRound + 1);
+            }
+            else if (i === cheatKeys.length + 1) skipToFinalBoss();
+            else if (i === cheatKeys.length + 2) watchCutscene();
             else { menuState = 'main'; menuSelection = 7; }
             return;
           }
@@ -8796,29 +8811,53 @@ function draw() {
       ctx.restore();
     }
 
-    // Freeze aura visual (endless mode)
+    // Freeze aura visual (endless mode) — smooth radial gradient
     if ((state === 'endless') && endless.powerups.freezeAura > 0) {
       const freezeR = 120 + endless.powerups.freezeAura * 60;
+      const fcx = px + p.w/2, fcy = py + p.h/2;
       ctx.save();
-      ctx.globalAlpha = 0.08 + Math.sin(gameTimer * 0.05) * 0.04;
-      ctx.fillStyle = '#88ccff';
+      const fGrad = ctx.createRadialGradient(fcx, fcy, freezeR * 0.1, fcx, fcy, freezeR);
+      const fPulse = 0.12 + Math.sin(gameTimer * 0.05) * 0.05;
+      fGrad.addColorStop(0, `rgba(136,204,255,${fPulse * 0.6})`);
+      fGrad.addColorStop(0.5, `rgba(136,204,255,${fPulse * 0.3})`);
+      fGrad.addColorStop(1, 'rgba(136,204,255,0)');
+      ctx.fillStyle = fGrad;
       ctx.beginPath();
-      ctx.arc(px + p.w/2, py + p.h/2, freezeR, 0, Math.PI * 2);
+      ctx.arc(fcx, fcy, freezeR, 0, Math.PI * 2);
       ctx.fill();
-      ctx.globalAlpha = 1;
+      // Soft ring at edge
+      ctx.strokeStyle = `rgba(136,220,255,${fPulse * 0.5})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.restore();
     }
 
-    // Shield aura visual (endless mode)
+    // Shield aura visual (endless mode) — smooth radial gradient
     if ((state === 'endless' || state === 'endlessShop') && endless.shieldCharges > 0) {
+      const scx = px + p.w/2, scy = py + p.h/2;
+      const sR = p.w * 0.8;
+      const sPulse = 0.3 + Math.sin(gameTimer * 0.08) * 0.12;
       ctx.save();
-      ctx.globalAlpha = 0.25 + Math.sin(gameTimer * 0.08) * 0.1;
-      ctx.strokeStyle = '#44ddff';
-      ctx.lineWidth = 2;
+      const sGrad = ctx.createRadialGradient(scx, scy, sR * 0.7, scx, scy, sR);
+      sGrad.addColorStop(0, 'rgba(68,221,255,0)');
+      sGrad.addColorStop(0.6, `rgba(68,221,255,${sPulse * 0.15})`);
+      sGrad.addColorStop(1, `rgba(68,221,255,${sPulse * 0.4})`);
+      ctx.fillStyle = sGrad;
       ctx.beginPath();
-      ctx.arc(px + p.w/2, py + p.h/2, p.w * 0.8, 0, Math.PI * 2);
+      ctx.arc(scx, scy, sR, 0, Math.PI * 2);
+      ctx.fill();
+      // Bright ring
+      ctx.strokeStyle = `rgba(100,240,255,${sPulse * 0.6})`;
+      ctx.lineWidth = 2;
       ctx.stroke();
-      ctx.globalAlpha = 1;
+      // Charge indicators — small dots around the ring
+      for (let ci = 0; ci < endless.shieldCharges; ci++) {
+        const cAngle = (ci / endless.powerups.shield) * Math.PI * 2 - Math.PI / 2 + gameTimer * 0.02;
+        ctx.fillStyle = `rgba(150,240,255,${sPulse})`;
+        ctx.beginPath();
+        ctx.arc(scx + Math.cos(cAngle) * sR, scy + Math.sin(cAngle) * sR, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
   }
@@ -15005,7 +15044,7 @@ function draw() {
       const cheatLabels = ['GOD MODE', 'ONE HIT KILL', 'INFINITE JUMPS', 'SPEED BOOST (2X)', 'BIG PROJECTILES', 'NO COOLDOWN'];
       const cheatDescs = ['Take no damage', 'All attacks kill instantly', 'Unlimited mid-air jumps', 'Double movement speed', 'Larger & faster throws', 'No throw cooldown'];
       const cheatY = H * 0.28;
-      const totalItems = cheatKeys.length + 3; // cheats + skip + watch + back
+      const totalItems = cheatKeys.length + 4; // cheats + endless round + skip + watch + back
       
       for (let i = 0; i < totalItems; i++) {
         const y = cheatY + i * 38;
@@ -15053,6 +15092,30 @@ function draw() {
           ctx.fillText(isOn ? 'ON' : 'OFF', W/2 + 170, y + 6);
           
         } else if (i === cheatKeys.length) {
+          // ── ENDLESS START ROUND selector ──
+          if (selected) {
+            ctx.fillStyle = '#44ff4422';
+            ctx.fillRect(W/2 - 220, y - 14, 440, 32);
+            ctx.strokeStyle = '#44ff44';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(W/2 - 220, y - 14, 440, 32);
+          }
+          ctx.fillStyle = selected ? '#44ff44' : '#88cc88';
+          ctx.font = `${selected ? 'bold ' : ''}14px monospace`;
+          ctx.textAlign = 'left';
+          ctx.fillText('ENDLESS START ROUND', W/2 - 150, y + 6);
+          // Left/right arrows + value
+          ctx.fillStyle = selected ? '#44ff44' : '#aaa';
+          ctx.font = 'bold 16px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`\u25c0  ${endlessStartRound}  \u25b6`, W/2 + 140, y + 6);
+          // Description
+          ctx.fillStyle = '#666';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'right';
+          ctx.fillText(_isTouchDev ? 'Tap left/right to adjust' : '\u2190\u2192 adjust | Shift +10 | Enter reset', W/2 + 210, y + 20);
+
+        } else if (i === cheatKeys.length + 1) {
           // Skip to final boss button
           if (selected) {
             ctx.fillStyle = '#ff880044';
@@ -15069,7 +15132,7 @@ function draw() {
           ctx.fillText('\u26a1 SKIP TO FINAL BOSS FIGHT \u26a1', W/2, y + 6);
           ctx.shadowBlur = 0;
           
-        } else if (i === cheatKeys.length + 1) {
+        } else if (i === cheatKeys.length + 2) {
           // Watch cutscene button
           if (selected) {
             ctx.fillStyle = '#4488ff44';
