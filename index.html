@@ -564,6 +564,9 @@ function startEndless() {
   player.onGround = true;
   player.facing = 1;
   player.iFrames = 60;
+  // Reset touch/joystick state
+  moveJoystick.active = false; moveJoystick.touchId = null; moveJoystick.dx = 0; moveJoystick.dy = 0; moveJoystick.inJumpUp = false;
+  touchAim.active = false; aimTouchId = null; touchControls.left = false; touchControls.right = false; touchControls.up = false;
   particles = [];
   projectiles = [];
   bullets = [];
@@ -822,6 +825,7 @@ function endlessGenerateShop() {
 function endlessApplyPowerup(key) {
   const pu = endless.powerups;
   const def = ENDLESS_POWERUP_DEFS[key];
+  if (!def) return; // invalid key guard (prevents MP exploit crash)
   if (pu[key] >= def.max) return;
   pu[key]++;
 
@@ -1716,6 +1720,9 @@ async function leaveRoom() {
   mpRetryVotes = {};
   mpRetrySelection = 0;
   mpMatchSettings = null;
+  // Reset touch/joystick state
+  moveJoystick.active = false; moveJoystick.touchId = null; moveJoystick.dx = 0; moveJoystick.dy = 0; moveJoystick.inJumpUp = false;
+  touchAim.active = false; aimTouchId = null; touchControls.left = false; touchControls.right = false; touchControls.up = false;
   menuState = 'multiplayer';
   mpMenuSelection = 0;
 }
@@ -4194,6 +4201,9 @@ function startGame() {
   particles = [];
   projectiles = [];
   epsteinProjectiles = [];
+  // Reset touch/joystick state to prevent stale input after restart
+  moveJoystick.active = false; moveJoystick.touchId = null; moveJoystick.dx = 0; moveJoystick.dy = 0; moveJoystick.inJumpUp = false;
+  touchAim.active = false; aimTouchId = null; touchControls.left = false; touchControls.right = false; touchControls.up = false;
   epstein = null;
   phonecallTimer = 0;
   fusionBoss = null;
@@ -6198,7 +6208,7 @@ function update() {
     ep.rotation += 0.1;
     ep.life--;
     // Hit player
-    if (p.iFrames <= 0 && p.alive && rectsOverlap({ x: ep.x - ep.size/2, y: ep.y - ep.size/2, w: ep.size, h: ep.size }, p)) {
+    if (p.iFrames <= 0 && !p.won && p.alive && rectsOverlap({ x: ep.x - ep.size/2, y: ep.y - ep.size/2, w: ep.size, h: ep.size }, p)) {
       p.hp--;
       p.iFrames = 40;
       shakeTimer = 8;
@@ -6785,7 +6795,7 @@ function update() {
 
       // Contact damage — ALL players
       const contactDmg = (mb.name === 'HAWKING' && hawkingAlone) ? (hawkingPhase2 ? 3 : 2) : 1;
-      if (p.alive && p.iFrames <= 0 && rectsOverlap(p, mb)) {
+      if (p.alive && !p.won && p.iFrames <= 0 && rectsOverlap(p, mb)) {
         p.hp -= contactDmg;
         p.iFrames = 40;
         p.vx = (p.x < mb.x ? -1 : 1) * 5;
@@ -7327,11 +7337,6 @@ function update() {
     }
 
     // Speed powerup modifies player speed
-    if (state === 'endless') {
-      const spdMult = 1 + endless.powerups.speedBoost * 0.12;
-      // Applied in movement: player.vx is already set. We just clamp differently.
-    }
-
     // Dash cooldown tick
     if (endless.dashCooldown > 0) endless.dashCooldown--;
 
@@ -7379,6 +7384,7 @@ function update() {
     const aX = endless.arenaX, aW = endless.arenaW, aH = endless.arenaH;
     const floorY = endless.arenaY + aH;
     if (!mpEnabled || isHost) {
+    const _pendingSummons = []; // collect boss summons to avoid mutating array during iteration
     for (const e of endless.enemies) {
       if (e.dead) continue;
       if (e.iFrames > 0) e.iFrames--;
@@ -7415,7 +7421,7 @@ function update() {
               const template = ENDLESS_ENEMY_TIERS[Math.min(Math.floor(endless.round / 5), ENDLESS_ENEMY_TIERS.length - 1)];
               const side = Math.random() > 0.5 ? 1 : -1;
               const mhp = Math.ceil(template.baseHp * (1 + endless.round * 0.1));
-              endless.enemies.push({
+              _pendingSummons.push({
                 x: side > 0 ? aX + aW - template.w - 10 : aX + 10,
                 y: floorY - template.h - 2,
                 w: template.w, h: template.h,
@@ -7472,6 +7478,11 @@ function update() {
           if (Math.abs(e.chargeVx) < 0.5) e.charging = false;
           // Charge hits player
           if (player.alive && player.iFrames <= 0 && rectsOverlap(player, e)) {
+            if (endless.shieldCharges > 0) {
+              endless.shieldCharges--;
+              player.iFrames = 50;
+              spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#44ddff', 15);
+            } else {
             player.hp -= e.dmg + 1;
             player.iFrames = 50;
             player.vx = e.chargeVx * 0.5;
@@ -7481,6 +7492,7 @@ function update() {
             if (player.hp <= 0) {
               handlePlayerDeath();
               if (endless.round > endless.highScore) { endless.highScore = endless.round; localStorage.setItem('endlessHighScore', String(endless.highScore)); }
+            }
             }
           }
         }
@@ -7493,6 +7505,11 @@ function update() {
           // Shockwave damage
           const shockDist = 200;
           if (player.alive && player.iFrames <= 0 && Math.abs(player.x - e.x) < shockDist) {
+            if (endless.shieldCharges > 0) {
+              endless.shieldCharges--;
+              player.iFrames = 40;
+              spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#44ddff', 12);
+            } else {
             player.hp -= e.dmg;
             player.iFrames = 40;
             player.vy = -10;
@@ -7500,6 +7517,7 @@ function update() {
             if (player.hp <= 0) {
               handlePlayerDeath();
               if (endless.round > endless.highScore) { endless.highScore = endless.round; localStorage.setItem('endlessHighScore', String(endless.highScore)); }
+            }
             }
           }
           // Slam particles
@@ -7554,8 +7572,8 @@ function update() {
       }
 
       // Wall bounds
-      if (e.x < aX + 5) { e.x = aX + 5; e.dir = 1; }
-      if (e.x + e.w > aX + aW - 5) { e.x = aX + aW - e.w - 5; e.dir = -1; }
+      if (e.x < aX + 5) { e.x = aX + 5; e.dir = 1; if (e.charging) { e.charging = false; e.chargeVx = 0; } }
+      if (e.x + e.w > aX + aW - 5) { e.x = aX + aW - e.w - 5; e.dir = -1; if (e.charging) { e.charging = false; e.chargeVx = 0; } }
 
       // Jump if player is above and enemy is on ground-ish
       if (dy < -80 && e.vy === 0 && Math.abs(dx) < 200 && Math.random() < 0.02) {
@@ -7632,6 +7650,8 @@ function update() {
         }
       }
     }
+    // Add boss-summoned minions after iteration
+    if (_pendingSummons.length > 0) endless.enemies.push(..._pendingSummons);
 
     } // end host-only enemy AI
 
@@ -14138,6 +14158,8 @@ function draw() {
         // Buttons
         ctx.beginPath();
         ctx.arc(x + s*0.25, y - s*0.05, s*0.06, 0, Math.PI*2);
+        ctx.fill();
+        ctx.beginPath();
         ctx.arc(x + s*0.35, y + s*0.05, s*0.06, 0, Math.PI*2);
         ctx.fill();
       } else if (type === 'credits') {
@@ -14156,6 +14178,8 @@ function draw() {
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(x - s*0.15, y - s*0.1, s*0.05, 0, Math.PI*2);
+        ctx.fill();
+        ctx.beginPath();
         ctx.arc(x + s*0.15, y - s*0.1, s*0.05, 0, Math.PI*2);
         ctx.fill();
         ctx.beginPath();
@@ -14168,6 +14192,8 @@ function draw() {
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(x - s*0.15, y - s*0.1, s*0.05, 0, Math.PI*2);
+        ctx.fill();
+        ctx.beginPath();
         ctx.arc(x + s*0.15, y - s*0.1, s*0.05, 0, Math.PI*2);
         ctx.fill();
         ctx.beginPath();
@@ -14181,6 +14207,8 @@ function draw() {
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(x - s*0.15, y - s*0.05, s*0.05, 0, Math.PI*2);
+        ctx.fill();
+        ctx.beginPath();
         ctx.arc(x + s*0.15, y - s*0.05, s*0.05, 0, Math.PI*2);
         ctx.fill();
         // Angry eyebrows
@@ -14209,6 +14237,8 @@ function draw() {
         // Eyes
         ctx.beginPath();
         ctx.arc(x - s*0.15, y - s*0.05, s*0.08, 0, Math.PI*2);
+        ctx.fill();
+        ctx.beginPath();
         ctx.arc(x + s*0.15, y - s*0.05, s*0.08, 0, Math.PI*2);
         ctx.fill();
         // Nose
