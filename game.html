@@ -769,6 +769,21 @@ function endlessNextRound() {
   endless.roofY = 0;
   endless.roofTimer = 0;
 
+  // MP: Revive dead players at the start of each new round
+  if (mpEnabled && !player.alive) {
+    player.alive = true;
+    player.hp = player.maxHp;
+    player.iFrames = 90;
+    mpSpectating = false;
+    mpDeathSynced = false;
+    // Teleport to arena center
+    player.x = endless.arenaX + endless.arenaW / 2 - player.w / 2;
+    player.y = endless.arenaY + endless.arenaH - player.h - 10;
+    player.vy = 0; player.vx = 0;
+    spawnParticles(player.x + player.w/2, player.y + player.h/2, '#44ff88', 15);
+    showToast('Revived! New round starting', '#44ff88');
+  }
+
   // Regenerate platforms each round for variety
   endless.platforms = endlessGeneratePlatforms(endless.arenaX, endless.arenaY, endless.arenaW, endless.arenaH, endless.round);
 
@@ -1209,14 +1224,27 @@ function handlePlayerDeath() {
     mpDeathSynced = true;
     const alive = getAlivePlayerList();
     if (alive.length > 0) {
-      // Enter spectator mode
+      // Enter spectator mode — in endless mode, player will revive next round
       mpSpectating = true;
       mpSpectateIndex = 0;
       mpSpectateTarget = alive[0].uid;
+      if (state === 'endless' || state === 'endlessShop') {
+        showToast('You died! You\'ll respawn next round.', '#ff6644');
+      }
     } else {
       // All players dead
-      state = 'dead';
-      mpSpectating = false;
+      if (state === 'endless' || state === 'endlessShop') {
+        // Endless mode: game over only when everyone is dead
+        state = 'dead';
+        mpSpectating = false;
+        if (endless.round > endless.highScore) {
+          endless.highScore = endless.round;
+          localStorage.setItem('endlessHighScore', String(endless.highScore));
+        }
+      } else {
+        state = 'dead';
+        mpSpectating = false;
+      }
     }
   } else {
     state = 'dead';
@@ -2130,10 +2158,24 @@ function applyEnemyData() {
         cutscene.dialogueIndex = 0;
         cutscene.fadeAlpha = 0;
       }
-      // Guest entering endless from shop — 20% heal
+      // Guest entering endless from shop — 20% heal + revive if dead
       if (d.gameState === 'endless' && oldState === 'endlessShop') {
-        player.hp = Math.min(player.hp + Math.ceil(player.maxHp * 0.2), player.maxHp);
-        player.iFrames = 60;
+        if (!player.alive) {
+          // Revive guest at start of new round
+          player.alive = true;
+          player.hp = player.maxHp;
+          player.iFrames = 90;
+          mpSpectating = false;
+          mpDeathSynced = false;
+          player.x = endless.arenaX + endless.arenaW / 2 - player.w / 2;
+          player.y = endless.arenaY + endless.arenaH - player.h - 10;
+          player.vy = 0; player.vx = 0;
+          spawnParticles(player.x + player.w/2, player.y + player.h/2, '#44ff88', 15);
+          showToast('Revived! New round starting', '#44ff88');
+        } else {
+          player.hp = Math.min(player.hp + Math.ceil(player.maxHp * 0.2), player.maxHp);
+          player.iFrames = 60;
+        }
       }
       // Guest entering shop from endless — clear bullets, reset pick state
       if (d.gameState === 'endlessShop' && oldState === 'endless') {
@@ -7919,7 +7961,9 @@ function update() {
     }
 
     // ── CHECK ROUND COMPLETE (host only in MP) ──
-    if (state === 'endless' && endless.spawnsLeft <= 0 && endless.enemies.length === 0 && player.alive && (!mpEnabled || isHost)) {
+    // In MP: advance even if host is dead, as long as all enemies are cleared
+    const _anyAlive = !mpEnabled || player.alive || getAlivePlayerList().length > 0;
+    if (state === 'endless' && endless.spawnsLeft <= 0 && endless.enemies.length === 0 && _anyAlive && (!mpEnabled || isHost)) {
       // Round cleared!
       state = 'endlessShop';
       endless.intermission = true;
