@@ -239,25 +239,30 @@ let endless = {
   platforms: [],
   // Power-ups the player has collected
   powerups: {
-    dmgBoost: 0,      // +20% dmg per level (max 5)
-    speedBoost: 0,    // +12% speed per level (max 5)
-    maxHpBoost: 0,    // +5 HP per level (max 5)
-    regenBoost: 0,    // regen 1 HP every X seconds (max 3): 8s, 5s, 3s
-    projSpeed: 0,     // +15% proj speed per level (max 5)
-    multiShot: 0,     // shoot extra projectiles (max 3): 1, 2, 3 extra
-    cooldownReduce: 0,// -15% cooldown per level (max 4)
-    vampirism: 0,     // heal on kill (max 3): 1hp, 2hp, 3hp per kill
-    shield: 0,        // absorb hits (max 3): 1, 2, 3 charges per round
-    thorns: 0,        // reflect damage to melee attackers (max 3)
-    explosiveShot: 0, // projectiles explode on hit for AoE (max 2)
-    dash: 0,          // double-tap to dash/dodge (max 2): short, long
-    freezeAura: 0,    // slow nearby enemies (max 2)
-    luckyDrop: 0,     // chance to drop HP pickups from kills (max 3)
+    dmgBoost: 0,      // +20% dmg per level
+    speedBoost: 0,    // +12% speed per level
+    maxHpBoost: 0,    // +5 HP per level
+    regenBoost: 0,    // regen 1 HP every X seconds
+    projSpeed: 0,     // +15% proj speed per level
+    multiShot: 0,     // shoot extra projectiles
+    cooldownReduce: 0,// -15% cooldown per level
+    vampirism: 0,     // heal on kill
+    shield: 0,        // absorb hits per round
+    thorns: 0,        // reflect damage to melee attackers
+    explosiveShot: 0, // projectiles explode on hit for AoE
+    dash: 0,          // double-tap to dash/dodge
+    freezeAura: 0,    // slow nearby enemies
+    luckyDrop: 0,     // chance to drop HP pickups from kills
+    critChance: 0,    // 15% chance per level for 2x damage
+    magnetism: 0,     // pull HP pickups from further away
+    lastStand: 0,     // +50% dmg per level when below 25% HP
+    heavyImpact: 0,   // projectiles stun enemies briefly
   },
   shieldCharges: 0,   // current shield charges this round
   dashCooldown: 0,    // frames until dash is ready
   shopChoices: [],     // 3 power-up options for current round
   shopSelection: 0,
+  shopPicked: false,   // has this player picked this round? (MP: wait for all)
   boss: null,          // current boss enemy ref
   bossActive: false,   // is a boss round?
   modifier: null,      // current round modifier
@@ -265,20 +270,25 @@ let endless = {
 };
 
 const ENDLESS_POWERUP_DEFS = {
-  dmgBoost:       { name: 'DAMAGE UP',      icon: 'sword',   desc: '+20% throwable damage',        max: 5, color: '#ff4444' },
-  speedBoost:     { name: 'SPEED UP',        icon: 'wind',    desc: '+12% movement speed',          max: 5, color: '#44aaff' },
-  maxHpBoost:     { name: 'TOUGHNESS',       icon: 'heart',   desc: '+5 max HP (heals too)',         max: 5, color: '#ff88aa' },
-  regenBoost:     { name: 'REGENERATION',    icon: 'cross',   desc: 'Regen HP over time',            max: 3, color: '#44ff88' },
-  projSpeed:      { name: 'ARM STRENGTH',    icon: 'arm',     desc: '+15% throw speed',              max: 5, color: '#ffaa44' },
-  multiShot:      { name: 'MULTI-THROW',     icon: 'target',  desc: '+1 extra projectile',           max: 3, color: '#ff44ff' },
-  cooldownReduce: { name: 'QUICK HANDS',     icon: 'bolt',    desc: '-15% throw cooldown',           max: 4, color: '#ffff44' },
-  vampirism:      { name: 'VAMPIRISM',       icon: 'fangs',   desc: 'Heal on enemy kill',            max: 3, color: '#aa44ff' },
-  shield:         { name: 'ENERGY SHIELD',   icon: 'shield',  desc: 'Block 1 hit per round',         max: 3, color: '#44ddff' },
-  thorns:         { name: 'THORNS',          icon: 'thorns',  desc: 'Reflect damage to attackers',   max: 3, color: '#ff8844' },
-  explosiveShot:  { name: 'EXPLOSIVE SHOT',  icon: 'boom',    desc: 'Projectiles explode on hit',    max: 2, color: '#ff6622' },
-  dash:           { name: 'DODGE ROLL',      icon: 'dash',    desc: 'Double-tap to dash',            max: 2, color: '#88ffcc' },
-  freezeAura:     { name: 'FREEZE AURA',     icon: 'snow',    desc: 'Slow nearby enemies',           max: 2, color: '#88ccff' },
-  luckyDrop:      { name: 'LUCKY DROPS',     icon: 'star',    desc: 'Enemies drop HP pickups',       max: 3, color: '#ffdd44' },
+  dmgBoost:       { name: 'DAMAGE UP',      icon: 'sword',   desc: '+20% throwable damage',        max: 8, color: '#ff4444' },
+  speedBoost:     { name: 'SPEED UP',        icon: 'wind',    desc: '+12% movement speed',          max: 8, color: '#44aaff' },
+  maxHpBoost:     { name: 'TOUGHNESS',       icon: 'heart',   desc: '+5 max HP (heals too)',         max: 10, color: '#ff88aa' },
+  regenBoost:     { name: 'REGENERATION',    icon: 'cross',   desc: 'Regen HP over time',            max: 5, color: '#44ff88' },
+  projSpeed:      { name: 'ARM STRENGTH',    icon: 'arm',     desc: '+15% throw speed',              max: 8, color: '#ffaa44' },
+  multiShot:      { name: 'MULTI-THROW',     icon: 'target',  desc: '+1 extra projectile',           max: 5, color: '#ff44ff' },
+  cooldownReduce: { name: 'QUICK HANDS',     icon: 'bolt',    desc: '-15% throw cooldown',           max: 6, color: '#ffff44' },
+  vampirism:      { name: 'VAMPIRISM',       icon: 'fangs',   desc: 'Heal on enemy kill',            max: 5, color: '#aa44ff' },
+  shield:         { name: 'ENERGY SHIELD',   icon: 'shield',  desc: 'Block 1 hit per round',         max: 5, color: '#44ddff' },
+  thorns:         { name: 'THORNS',          icon: 'thorns',  desc: 'Reflect damage to attackers',   max: 5, color: '#ff8844' },
+  explosiveShot:  { name: 'EXPLOSIVE SHOT',  icon: 'boom',    desc: 'Projectiles explode on hit',    max: 3, color: '#ff6622' },
+  dash:           { name: 'DODGE ROLL',      icon: 'dash',    desc: 'Double-tap to dash',            max: 3, color: '#88ffcc' },
+  freezeAura:     { name: 'FREEZE AURA',     icon: 'snow',    desc: 'Slow nearby enemies',           max: 3, color: '#88ccff' },
+  luckyDrop:      { name: 'LUCKY DROPS',     icon: 'star',    desc: 'Enemies drop HP pickups',       max: 5, color: '#ffdd44' },
+  // New powerups
+  critChance:     { name: 'CRITICAL HIT',    icon: 'crit',    desc: '15% chance for 2x damage',      max: 5, color: '#ff2222' },
+  magnetism:      { name: 'MAGNETISM',       icon: 'magnet',  desc: 'Pull HP pickups from further',  max: 3, color: '#dd44dd' },
+  lastStand:      { name: 'LAST STAND',      icon: 'skull',   desc: '+50% dmg when below 25% HP',    max: 3, color: '#ff0066' },
+  heavyImpact:    { name: 'HEAVY IMPACT',    icon: 'hammer',  desc: 'Projectiles stun enemies',      max: 3, color: '#cc8844' },
 };
 
 // Canvas-drawn icons for endless mode powerups (no emojis)
@@ -499,6 +509,53 @@ function drawEndlessIcon(ctx, type, cx, cy, size, color) {
         ctx.lineTo(mx + Math.cos(angle - 0.7) * s*0.25, my + Math.sin(angle - 0.7) * s*0.25);
         ctx.stroke();
       }
+      break;
+    }
+    case 'crit': { // exclamation / lightning X
+      ctx.lineWidth = Math.max(2.5, size / 8);
+      ctx.beginPath();
+      ctx.moveTo(cx - s*0.4, cy - s*0.6); ctx.lineTo(cx + s*0.4, cy + s*0.6);
+      ctx.moveTo(cx + s*0.4, cy - s*0.6); ctx.lineTo(cx - s*0.4, cy + s*0.6);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, s*0.2, 0, Math.PI*2);
+      ctx.fill();
+      break;
+    }
+    case 'magnet': { // U-shaped magnet
+      ctx.lineWidth = Math.max(2.5, size / 8);
+      ctx.beginPath();
+      ctx.arc(cx, cy + s*0.1, s*0.5, Math.PI, 0, false);
+      ctx.stroke();
+      ctx.fillRect(cx - s*0.55, cy + s*0.05, s*0.2, s*0.55);
+      ctx.fillRect(cx + s*0.35, cy + s*0.05, s*0.2, s*0.55);
+      // Tips
+      ctx.fillStyle = '#ff4444';
+      ctx.fillRect(cx - s*0.55, cy + s*0.5, s*0.2, s*0.15);
+      ctx.fillRect(cx + s*0.35, cy + s*0.5, s*0.2, s*0.15);
+      break;
+    }
+    case 'skull': { // skull shape
+      ctx.beginPath();
+      ctx.arc(cx, cy - s*0.15, s*0.55, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillRect(cx - s*0.4, cy + s*0.2, s*0.8, s*0.35);
+      // Eyes
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(cx - s*0.2, cy - s*0.15, s*0.13, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + s*0.2, cy - s*0.15, s*0.13, 0, Math.PI*2); ctx.fill();
+      // Teeth
+      ctx.fillRect(cx - s*0.25, cy + s*0.3, s*0.1, s*0.2);
+      ctx.fillRect(cx - s*0.05, cy + s*0.3, s*0.1, s*0.2);
+      ctx.fillRect(cx + s*0.15, cy + s*0.3, s*0.1, s*0.2);
+      break;
+    }
+    case 'hammer': { // hammer shape
+      ctx.fillRect(cx - s*0.1, cy - s*0.1, s*0.2, s*0.9);
+      ctx.fillRect(cx - s*0.45, cy - s*0.7, s*0.9, s*0.45);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(1, size / 16);
+      ctx.strokeRect(cx - s*0.45, cy - s*0.7, s*0.9, s*0.45);
       break;
     }
   }
@@ -1515,6 +1572,16 @@ function setupRoomListeners(code, uid) {
       }
     }
     _prevPlayerIds = newIds;
+    // Merge display positions for smooth interpolation of remote players
+    for (const pid in data) {
+      if (roomPlayers[pid] && roomPlayers[pid]._dx !== undefined) {
+        data[pid]._dx = roomPlayers[pid]._dx;
+        data[pid]._dy = roomPlayers[pid]._dy;
+      } else {
+        data[pid]._dx = data[pid].x;
+        data[pid]._dy = data[pid].y;
+      }
+    }
     roomPlayers = data;
   });
   
@@ -1627,13 +1694,21 @@ function setupRoomListeners(code, uid) {
       }
       snap.ref.remove();
     });
-    // Host listens for guest shop picks in endless mode
-    roomR.child('shopPick').on('value', snap => {
-      const pick = snap.val();
-      if (pick && pick.key && state === 'endlessShop') {
-        endlessApplyPowerup(pick.key);
-        endlessNextRound();
+    // Host listens for all players' shop picks in endless mode
+    roomR.child('shopPicks').on('value', snap => {
+      const picks = snap.val();
+      if (!picks || state !== 'endlessShop') return;
+      // Check if all connected players have picked
+      const playerUids = Object.keys(roomPlayers);
+      const allPicked = playerUids.every(uid => picks[uid]);
+      if (allPicked && playerUids.length > 0) {
+        // Apply all players' picks
+        for (const uid of playerUids) {
+          if (picks[uid]) endlessApplyPowerup(picks[uid]);
+        }
         snap.ref.remove();
+        endless.shopPicked = false;
+        endlessNextRound();
       }
     });
   }
@@ -2046,20 +2121,26 @@ function applyEnemyData() {
     const syncStates = ['cutscene','bossfight','bossdialogue','phonecall','epsteinfight','fusioncutscene','fusionfight','splitfight','hawkingRefusal','hawkingDeath','winCutscene','won','dead','endless','endlessShop'];
     if (syncStates.includes(d.gameState) && state !== d.gameState) {
       const oldState = state;
-      // First time entering cutscene — set up cutscene.active so rendering works
+      // First time entering cutscene — set up cutscene.active and reset all state
+      // so guest doesn't carry stale timer/phase values that cause desync
       if (d.gameState === 'cutscene' && state !== 'cutscene') {
         cutscene.active = true;
+        cutscene.timer = 0;
+        cutscene.phase = 0;
+        cutscene.dialogueIndex = 0;
+        cutscene.fadeAlpha = 0;
       }
       // Guest entering endless from shop — 20% heal
       if (d.gameState === 'endless' && oldState === 'endlessShop') {
         player.hp = Math.min(player.hp + Math.ceil(player.maxHp * 0.2), player.maxHp);
         player.iFrames = 60;
       }
-      // Guest entering shop from endless — clear bullets
+      // Guest entering shop from endless — clear bullets, reset pick state
       if (d.gameState === 'endlessShop' && oldState === 'endless') {
         bullets = [];
         endless.bossActive = false;
         endless.modifier = null;
+        endless.shopPicked = false;
         screenFlash = 20;
         screenFlashColor = '#44ff44';
       }
@@ -2356,6 +2437,27 @@ function getNearestPlayerTarget(bossX, bossY) {
   return nearest || player; // fallback to player if everyone dead
 }
 
+// Lerp remote player display positions toward synced positions each frame
+function lerpRemotePlayers() {
+  if (!mpEnabled) return;
+  const uid = myUid();
+  for (const pid in roomPlayers) {
+    if (pid === uid) continue;
+    const rp = roomPlayers[pid];
+    if (!rp || rp._dx === undefined) continue;
+    const dx = rp.x - rp._dx;
+    const dy = rp.y - rp._dy;
+    // Snap if too far (teleport/arena transition)
+    if (Math.abs(dx) > 300 || Math.abs(dy) > 300) {
+      rp._dx = rp.x;
+      rp._dy = rp.y;
+    } else {
+      rp._dx += dx * 0.35;
+      rp._dy += dy * 0.35;
+    }
+  }
+}
+
 // Draw other players
 function drawOtherPlayers() {
   if (!mpEnabled) return;
@@ -2366,8 +2468,8 @@ function drawOtherPlayers() {
     const rp = roomPlayers[pid];
     if (!rp || !rp.alive) continue;
     
-    const px = rp.x;
-    const py = rp.y;
+    const px = rp._dx !== undefined ? rp._dx : rp.x;
+    const py = rp._dy !== undefined ? rp._dy : rp.y;
     const runBounce = rp.runFrame ? Math.sin(rp.runFrame * Math.PI / 2) * 2 : 0;
     
     // Semi-transparent other player
@@ -2975,7 +3077,7 @@ window.addEventListener('keydown', e => {
     state = 'menu'; menuState = 'main'; menuSelection = 1;
     return;
   }
-  if (state === 'endlessShop' && endless.shopChoices.length > 0) {
+  if (state === 'endlessShop' && endless.shopChoices.length > 0 && !endless.shopPicked) {
     if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
       endless.shopSelection = (endless.shopSelection - 1 + endless.shopChoices.length) % endless.shopChoices.length;
     }
@@ -2984,9 +3086,12 @@ window.addEventListener('keydown', e => {
     }
     if (e.code === 'Space' || e.code === 'Enter') {
       const key = endless.shopChoices[endless.shopSelection];
-      if (mpEnabled && !isHost) {
-        db.ref('rooms/' + currentRoom + '/shopPick').set({ key: key, by: myUid() });
+      if (mpEnabled) {
+        // MP: write pick to Firebase, wait for all players
+        db.ref('rooms/' + currentRoom + '/shopPicks/' + myUid()).set(key);
+        endless.shopPicked = true;
       } else {
+        // Single player: apply immediately
         endlessApplyPowerup(key);
         endlessNextRound();
       }
@@ -3379,7 +3484,7 @@ canvas.addEventListener('click', e => {
     if (mpEnabled && !isHost) { mpSendCutsceneEvent('advance'); } else { advanceCutscene(); } return;
   }
   // ── ENDLESS SHOP CLICK ──
-  if (state === 'endlessShop' && endless.shopChoices.length > 0) {
+  if (state === 'endlessShop' && endless.shopChoices.length > 0 && !endless.shopPicked) {
     const cardW = Math.min(220, (W - 60) / 3);
     const cardH = 240;
     const cardGap = 16;
@@ -3391,8 +3496,9 @@ canvas.addEventListener('click', e => {
       if (cx > cxCard && cx < cxCard + cardW && cy > cardY2 && cy < cardY2 + cardH) {
         endless.shopSelection = ci;
         const key = endless.shopChoices[ci];
-        if (mpEnabled && !isHost) {
-          db.ref('rooms/' + currentRoom + '/shopPick').set({ key: key, by: myUid() });
+        if (mpEnabled) {
+          db.ref('rooms/' + currentRoom + '/shopPicks/' + myUid()).set(key);
+          endless.shopPicked = true;
         } else {
           endlessApplyPowerup(key);
           endlessNextRound();
@@ -3782,7 +3888,7 @@ canvas.addEventListener('touchstart', e => {
     }
 
     // ── ENDLESS SHOP TOUCH ──
-    if (state === 'endlessShop' && endless.shopChoices.length > 0) {
+    if (state === 'endlessShop' && endless.shopChoices.length > 0 && !endless.shopPicked) {
       const cardW = Math.min(220, (W - 60) / 3);
       const cardH = 240;
       const cardGap = 16;
@@ -3794,8 +3900,9 @@ canvas.addEventListener('touchstart', e => {
         if (cx > cxCard && cx < cxCard + cardW && cy > cardY3 && cy < cardY3 + cardH) {
           endless.shopSelection = ci;
           const key = endless.shopChoices[ci];
-          if (mpEnabled && !isHost) {
-            db.ref('rooms/' + currentRoom + '/shopPick').set({ key: key, by: myUid() });
+          if (mpEnabled) {
+            db.ref('rooms/' + currentRoom + '/shopPicks/' + myUid()).set(key);
+            endless.shopPicked = true;
           } else {
             endlessApplyPowerup(key);
             endlessNextRound();
@@ -4420,8 +4527,16 @@ function throwProjectile() {
   }
   const pjSize = cheats.bigProjectiles ? 50 : 28;
   // Endless damage multiplier stored on projectile
-  const endlessDmgMult = (state === 'endless') ? (1 + endless.powerups.dmgBoost * 0.20) : 1;
+  let endlessDmgMult = (state === 'endless') ? (1 + endless.powerups.dmgBoost * 0.20) : 1;
+  // Last Stand: +50% dmg per level when below 25% HP
+  if (state === 'endless' && endless.powerups.lastStand > 0 && p.hp <= p.maxHp * 0.25) {
+    endlessDmgMult *= (1 + endless.powerups.lastStand * 0.5);
+  }
+  // Critical Hit: 15% chance per level for 2x damage
+  const isCrit = (state === 'endless' && endless.powerups.critChance > 0 && Math.random() < endless.powerups.critChance * 0.15);
+  if (isCrit) endlessDmgMult *= 2;
   const isExplosive = (state === 'endless') && endless.powerups.explosiveShot > 0;
+  const isStunning = (state === 'endless') && endless.powerups.heavyImpact > 0;
   projectiles.push({
     x: p.x + p.w / 2,
     y: p.y + p.h / 3,
@@ -4433,6 +4548,9 @@ function throwProjectile() {
     dmgMult: endlessDmgMult,
     explosive: isExplosive,
     explosionRadius: isExplosive ? (80 + endless.powerups.explosiveShot * 40) : 0,
+    stunning: isStunning,
+    stunDuration: isStunning ? (20 + endless.powerups.heavyImpact * 15) : 0,
+    crit: isCrit,
   });
   // Extra projectiles from multiShot powerup
   for (let es = 0; es < endlessExtraShots; es++) {
@@ -4662,8 +4780,20 @@ function update() {
     return;
   }
 
-  // Cutscene update
+  // Cutscene update — guest only follows host-synced phase/dialogueIndex/fadeAlpha
   if (state === 'cutscene') {
+    if (mpEnabled && !isHost) {
+      // Guest: only handle local fade rendering from synced values.
+      // Phase transitions and auto-advance are driven by host sync.
+      // Smooth the fadeAlpha locally for rendering (host syncs phase + fadeAlpha)
+      if (cutscene.phase === 3) {
+        cutscene.fadeAlpha -= 0.03;
+        if (cutscene.fadeAlpha <= 0) {
+          cutscene.fadeAlpha = 0;
+          cutscene.active = false;
+        }
+      }
+    } else {
     cutscene.timer++;
     if (cutscene.phase === 0) {
       // Fade to black
@@ -4738,6 +4868,7 @@ function update() {
         state = 'bossfight';
       }
     }
+    } // end host/single-player cutscene update
     // Still update particles during cutscene
     if (screenFlash > 0) screenFlash--;
     if (bossIntroTimer > 0) bossIntroTimer--;
@@ -4947,9 +5078,10 @@ function update() {
   if (touchJumpQueued) p.prevUp = false;
 
   // After reading touch state, reset for rising edge detection.
-  // Reset inJumpUp so holding the stick up doesn't keep triggering jumps,
-  // but re-derive continuous 'up' from joystick position for wall climbing.
-  moveJoystick.inJumpUp = false;
+  // DO NOT reset moveJoystick.inJumpUp here — it's managed by touchmove
+  // (set true when joystick enters jump zone, set false when it leaves).
+  // Resetting it every frame caused iPad double-jump: touchmove between
+  // frames would re-trigger touchJumpQueued because inJumpUp was falsely cleared.
   touchControls.up = (moveJoystick.active && moveJoystick.dy < MOVE_JUMP_THRESHOLD);
   touchJumpQueued = false;
   if (jumpFlashTimer > 0) jumpFlashTimer--;
@@ -7603,7 +7735,9 @@ function update() {
         if (e.barrageCooldown > 0) e.barrageCooldown--;
         // Boss moves toward player (slower than normal AI)
         if (!e.charging) {
-          if (Math.abs(dx) > 60) {
+          if (e._stunTimer > 0) {
+            e._stunTimer--;
+          } else if (Math.abs(dx) > 60) {
             e.dir = dx > 0 ? 1 : -1;
             e.x += e.dir * e.speed * 0.7;
           }
@@ -7612,7 +7746,10 @@ function update() {
         // ── NORMAL ENEMY AI ──
         // Move toward player
         const moveSpd = e.speed * (1 + endless.round * 0.01);
-        if (Math.abs(dx) > 30) {
+        // Stunned enemies don't move
+        if (e._stunTimer > 0) {
+          e._stunTimer--;
+        } else if (Math.abs(dx) > 30) {
           e.dir = dx > 0 ? 1 : -1;
           e.x += e.dir * moveSpd;
         }
@@ -7705,10 +7842,11 @@ function update() {
               if (endless.powerups.vampirism > 0 && player.alive) {
                 player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
               }
-              // Lucky drop on thorns kill
-              if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12) {
+              // Lucky drop on thorns kill (magnetism boosts)
+              const _magnetBonus2 = endless.powerups.magnetism || 0;
+              if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12 + _magnetBonus2 * 0.05) {
                 spawnParticles(e.x + e.w/2, e.y + e.h/2, '#44ff44', 5);
-                if (player.alive) player.hp = Math.min(player.hp + 2, player.maxHp);
+                if (player.alive) player.hp = Math.min(player.hp + 2 + _magnetBonus2, player.maxHp);
               }
             }
           }
@@ -7788,7 +7926,12 @@ function update() {
       endless.intermissionTimer = 0;
       endless.bossActive = false;
       endless.modifier = null;
+      endless.shopPicked = false; // reset per-player pick tracking
       endlessGenerateShop();
+      // Clear previous picks from Firebase (MP)
+      if (mpEnabled && isHost) {
+        db.ref('rooms/' + currentRoom + '/shopPicks').remove();
+      }
       // Heal player between rounds — 20% of max HP
       player.hp = Math.min(player.hp + Math.ceil(player.maxHp * 0.2), player.maxHp);
       player.iFrames = 60;
@@ -7818,6 +7961,14 @@ function update() {
           const dmg = Math.ceil((proj.dmgMult || 1) * (cheats.oneHitKill ? 999 : 1));
           e.hp -= dmg;
           e.iFrames = 5;
+          // Heavy Impact: stun enemy
+          if (proj.stunning && proj.stunDuration > 0) {
+            e._stunTimer = (e._stunTimer || 0) + proj.stunDuration;
+          }
+          // Crit visual
+          if (proj.crit) {
+            bossVfx.push({ type: 'text', x: e.x + e.w/2, y: e.y - 10, text: 'CRIT!', color: '#ff2222', size: 22, life: 40, maxLife: 40, vy: -1.5 });
+          }
           spawnParticles(e.x + e.w / 2, e.y + e.h / 3, e.color, 8);
           shakeTimer = 4;
           // Explosive shot: AoE damage on hit
@@ -7847,10 +7998,11 @@ function update() {
                   if (endless.powerups.vampirism > 0 && player.alive) {
                     player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
                   }
-                  // Lucky drop from AoE kill
-                  if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12) {
+                  // Lucky drop from AoE kill (magnetism boosts)
+                  const _mb3 = endless.powerups.magnetism || 0;
+                  if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12 + _mb3 * 0.05) {
                     spawnParticles(ae.x + ae.w/2, ae.y + ae.h/2, '#44ff44', 5);
-                    if (player.alive) player.hp = Math.min(player.hp + 2, player.maxHp);
+                    if (player.alive) player.hp = Math.min(player.hp + 2 + _mb3, player.maxHp);
                   }
                 }
               }
@@ -7866,10 +8018,12 @@ function update() {
             if (endless.powerups.vampirism > 0 && player.alive) {
               player.hp = Math.min(player.hp + endless.powerups.vampirism, player.maxHp);
             }
-            // Lucky drop: chance to spawn HP
-            if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12) {
+            // Lucky drop: chance to spawn HP (magnetism boosts chance + heal amount)
+            const magnetBonus = endless.powerups.magnetism || 0;
+            if (endless.powerups.luckyDrop > 0 && Math.random() < endless.powerups.luckyDrop * 0.12 + magnetBonus * 0.05) {
+              const healAmt = 2 + magnetBonus;
               spawnParticles(e.x + e.w/2, e.y + e.h/2, '#44ff44', 5);
-              if (player.alive) player.hp = Math.min(player.hp + 2, player.maxHp);
+              if (player.alive) player.hp = Math.min(player.hp + healAmt, player.maxHp);
             }
           }
           hit = true;
@@ -9053,7 +9207,8 @@ function draw() {
     }
   }
 
-  // Draw other multiplayer players
+  // Interpolate + draw other multiplayer players
+  lerpRemotePlayers();
   drawOtherPlayers();
 
   // Projectiles
@@ -10917,7 +11072,21 @@ function draw() {
     ctx.fillStyle = '#888';
     ctx.font = '12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('← → to select, ENTER to choose', W / 2, cardY + cardH + 30);
+    if (mpEnabled && endless.shopPicked) {
+      // Show "Waiting for others..." overlay after picking in MP
+      ctx.fillStyle = '#00000088';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#ffcc44';
+      ctx.font = 'bold 24px monospace';
+      ctx.textAlign = 'center';
+      const dots = '.'.repeat(1 + Math.floor(Date.now() / 500) % 3);
+      ctx.fillText('Waiting for other players' + dots, W / 2, H / 2);
+      ctx.fillStyle = '#aaa';
+      ctx.font = '14px monospace';
+      ctx.fillText('You picked: ' + ENDLESS_POWERUP_DEFS[endless.shopChoices[endless.shopSelection]]?.name, W / 2, H / 2 + 35);
+    } else {
+      ctx.fillText('← → to select, ENTER to choose', W / 2, cardY + cardH + 30);
+    }
     ctx.textAlign = 'left';
   }
 
